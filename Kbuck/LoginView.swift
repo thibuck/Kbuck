@@ -12,6 +12,7 @@ struct LoginView: View {
     @State private var authError: String?
     @State private var acceptedTerms: Bool = false
     @State private var showTerms: Bool = false
+    @AppStorage("hpdUserBanned") private var isUserBanned: Bool = false
 
     var body: some View {
         VStack(spacing: 32) {
@@ -99,9 +100,25 @@ struct LoginView: View {
             .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
             .frame(height: 50)
             .padding(.horizontal, 40)
-            .disabled(!acceptedTerms)
-            .opacity(acceptedTerms ? 1.0 : 0.5)
-            .allowsHitTesting(acceptedTerms)
+            .disabled(!acceptedTerms || isUserBanned)
+            .opacity(acceptedTerms && !isUserBanned ? 1.0 : 0.5)
+            .allowsHitTesting(acceptedTerms && !isUserBanned)
+
+            if isUserBanned {
+                VStack(spacing: 6) {
+                    Image(systemName: "nosign").font(.title).foregroundStyle(.red)
+                    Text("Account Suspended").font(.headline).foregroundStyle(.red)
+                    Text("Please contact the administrator at\nabubick@bubickcompany.com")
+                        .font(.caption)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                }
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color.red.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .padding(.horizontal, 40)
+            }
 
             if let err = authError {
                 Text(err)

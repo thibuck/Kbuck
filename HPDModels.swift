@@ -59,6 +59,62 @@ func isDateInPast(_ dateString: String) -> Bool {
     return Calendar.current.startOfDay(for: date) < Calendar.current.startOfDay(for: Date())
 }
 
+// MARK: - VIN Failure Tracker
+
+class VINFailureTracker {
+    static let shared = VINFailureTracker()
+    private let defaults = UserDefaults.standard
+    private let key = "hpd_vin_failures"
+
+    private var history: [String: [Date]] {
+        get {
+            guard let data = defaults.data(forKey: key),
+                  let decoded = try? JSONDecoder().decode([String: [Date]].self, from: data) else { return [:] }
+            return decoded
+        }
+        set {
+            if let encoded = try? JSONEncoder().encode(newValue) { defaults.set(encoded, forKey: key) }
+        }
+    }
+
+    func recordFailure(vin: String) {
+        guard !vin.isEmpty else { return }
+        var current = history
+        var dates = current[vin] ?? []
+        dates.append(Date())
+        current[vin] = dates
+        history = current
+    }
+
+    func clearFailures(vin: String) {
+        var current = history
+        current.removeValue(forKey: vin)
+        history = current
+    }
+
+    func status(for vin: String) -> (isRed: Bool, canTry: Bool, errorMessage: String?) {
+        let dates = history[vin] ?? []
+        if dates.isEmpty { return (false, true, nil) }
+
+        if dates.count >= 6 {
+            return (true, false, "Extraction permanently blocked for this vehicle. The server consistently returns errors or data does not exist.")
+        }
+
+        if dates.count >= 3 {
+            guard let lastFailure = dates.last else { return (true, true, nil) }
+            let diff = Date().timeIntervalSince(lastFailure)
+            if diff < 3600 {
+                let minsLeft = Int((3600 - diff) / 60)
+                return (true, false, "Too many failed attempts. Please try again in \(minsLeft) minutes.")
+            }
+        }
+
+        return (true, true, nil)
+    }
+}
+
+// MARK: - Shared Utility Functions
+
 /// Formats a raw numeric price string for display (e.g., "4200" → "$4,200").
 func formatPrivateValueForDisplay(_ s: String) -> String {
     let t = s.trimmingCharacters(in: .whitespacesAndNewlines)

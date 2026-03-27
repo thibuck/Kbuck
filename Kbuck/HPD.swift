@@ -21,6 +21,35 @@ struct SafariView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
 }
 
+private struct SearchBar: View {
+    @Binding var text: String
+    let placeholder: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+
+            TextField(placeholder, text: $text)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled(true)
+
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color(.systemGray6))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
 struct MileageWebView: UIViewRepresentable {
     let url: URL
     let isActive: Bool
@@ -627,6 +656,95 @@ private struct LocationFilterSheet: View {
     }
 }
 
+// MARK: - Welcome Onboarding
+
+struct WelcomeOnboardingView: View {
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("hideWelcomeScreen") private var hideWelcomeScreen: Bool = false
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+
+                Text("Welcome to HPD Auction")
+                    .font(.largeTitle.bold())
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 32)
+
+                VStack(spacing: 20) {
+                    featureRow(
+                        icon: "magnifyingglass", color: .blue,
+                        title: "Smart Aggregation",
+                        description: "Search and filter historical HPD auction records instantly."
+                    )
+                    featureRow(
+                        icon: "hammer.fill", color: .blue,
+                        title: "Data Extraction",
+                        description: "Fetch recent state inspection mileage and estimated DMV Private Party Values."
+                    )
+                    featureRow(
+                        icon: "chart.bar.fill", color: .green,
+                        title: "Fair-Use Quota",
+                        description: "Get up to 50 successful data extractions per day. Failed attempts do not consume your quota."
+                    )
+                }
+
+                VStack(spacing: 8) {
+                    Text("LEGAL DISCLAIMER\nData is retrieved from public third-party sources and provided 'AS IS' for informational purposes. We do not guarantee accuracy, completeness, or real-time validity. Always verify vehicles physically.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(16)
+                }
+                .background(Color(.systemGray6))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .padding(.horizontal, 4)
+
+                VStack(spacing: 12) {
+                    Button(action: { hideWelcomeScreen.toggle() }) {
+                        HStack(spacing: 10) {
+                            Image(systemName: hideWelcomeScreen ? "checkmark.square.fill" : "square")
+                                .font(.title3)
+                                .foregroundStyle(hideWelcomeScreen ? .blue : .secondary)
+                            Text("Do not show this again")
+                                .foregroundStyle(.primary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.bottom, 8)
+
+                    Button("Get Started") {
+                        dismiss()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .frame(maxWidth: .infinity)
+                }
+                .padding(.bottom, 32)
+            }
+            .padding(.horizontal, 24)
+        }
+    }
+
+    @ViewBuilder
+    private func featureRow(icon: String, color: Color, title: String, description: String) -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundStyle(color)
+                .frame(width: 36)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline)
+                Text(description)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 struct SPVWebView: UIViewRepresentable {
     let url: URL
     let isActive: Bool
@@ -1213,6 +1331,7 @@ private extension String {
 
 struct HPDView: View {
     var favoritesOnly: Bool = false
+    @Environment(\.scenePhase) private var scenePhase
 
     enum ExtractionState: Equatable {
         case idle
@@ -1229,6 +1348,7 @@ struct HPDView: View {
     @AppStorage("hpdManualURLEnabled") private var manualURLModeEnabled: Bool = false
     @AppStorage("hpdManualURLInput")   private var hpdManualURLInput: String = ""
     @AppStorage("hpdRefreshTrigger")   private var hpdRefreshTrigger: Int = 0
+    @AppStorage("hpdUserBanned") private var isUserBanned: Bool = false
     @State private var isLoading: Bool = false
     @State private var errorMessage: String? = nil
     @State private var entries: [HPDEntry] = []
@@ -1242,6 +1362,8 @@ struct HPDView: View {
     @AppStorage("hpdHadLastError") private var hpdHadLastError: Bool = false
     @AppStorage("selectedLocationFiltersData") private var selectedLocationFiltersData: Data = Data()
     @State private var showLocationFilterSheet: Bool = false
+    @State private var isUserNavigatingFromHeader: Bool = false
+    @State private var showFilter: Bool = false
     @State private var filterOption: FilterOption = .all
 
     @State private var searchText: String = ""
@@ -1255,9 +1377,15 @@ struct HPDView: View {
     @State private var spvVIN: String? = nil
     @State private var spvOdo: String? = nil
 
+    @AppStorage("hideWelcomeScreen") private var hideWelcomeScreen: Bool = false
+    @State private var showWelcomeSheet: Bool = false
+    static var hasShownWelcomeThisSession: Bool = false
+
     @State private var extractionState: ExtractionState = .idle
     @State private var extractionError: String? = nil
     @State private var extractionCancelToken = UUID()
+    @State private var extractionErrorMessage: String? = nil
+    @State private var showExtractionErrorAlert: Bool = false
     @State private var mileageForceStartToken = UUID()
 
     // Tracking which card is running and which finished last
@@ -1306,6 +1434,10 @@ struct HPDView: View {
         if locs.isEmpty { return "- All Locations" }
         if locs.count == 1 { return "- @ \(locs.first!)" }
         return "- \(locs.count) Locations"
+    }
+
+    private var showFilterIndicator: Bool {
+        !selectedLocationFilters.isEmpty || filterOption != .all || sortKey != .date || !sortAscending
     }
 
     private func decodeCachedEntries(_ data: Data) -> [HPDEntry] {
@@ -1853,7 +1985,42 @@ struct HPDView: View {
         }
     }
 
+    @ViewBuilder private var skeletonCardRow: some View {
+        HStack(alignment: .center, spacing: 10) {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .frame(width: 44, height: 28)
+            VStack(alignment: .leading, spacing: 4) {
+                RoundedRectangle(cornerRadius: 4).frame(width: 160, height: 14)
+                RoundedRectangle(cornerRadius: 4).frame(width: 110, height: 10)
+            }
+            Spacer()
+            RoundedRectangle(cornerRadius: 14).frame(width: 34, height: 34)
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 4)
+        .redacted(reason: .placeholder)
+        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+        .listRowBackground(Color(.secondarySystemBackground).clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous)))
+        .listRowSeparator(.hidden)
+    }
+
+    @ViewBuilder private var skeletonList: some View {
+        List {
+            ForEach(0..<6, id: \.self) { _ in
+                skeletonCardRow
+            }
+        }
+        .listStyle(.plain)
+        .listSectionSpacing(.custom(0))
+        .allowsHitTesting(false)
+        .navigationTitle(favoritesOnly ? "FAVORITES" : "HPD AUCTION")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
     @ViewBuilder private var vehicleList: some View {
+        if isLoading && entries.isEmpty {
+            skeletonList
+        } else {
         List {
             // Unified header row: chips + error + counter in one cell
             VStack(spacing: 4) {
@@ -1897,30 +2064,39 @@ struct HPDView: View {
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
 
-            ForEach(groupedByDate(), id: \.0) { dateKey, items in
-                let isCollapsed = collapsedDates.contains(dateKey)
-                Section(header: sectionHeader(for: dateKey, displayDate: dateKey.toAuctionRelativeDay(), count: items.count, collapsed: isCollapsed) {
-                    if isCollapsed { collapsedDates.remove(dateKey) } else { collapsedDates.insert(dateKey) }
-                }) {
-                    if !isCollapsed {
-                        sectionRows(for: items)
+            if filteredEntries().isEmpty && !isLoading {
+                ContentUnavailableView {
+                    Label(
+                        favoritesOnly ? "No Favorites Yet" : "No Vehicles Found",
+                        systemImage: favoritesOnly ? "star.slash" : "magnifyingglass"
+                    )
+                } description: {
+                    Text(favoritesOnly ? "Vehicles you star will appear here." : "Try adjusting your search or filters.")
+                }
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            } else {
+                ForEach(groupedByDate(), id: \.0) { dateKey, items in
+                    let isCollapsed = collapsedDates.contains(dateKey)
+                    Section(header: sectionHeader(for: dateKey, displayDate: dateKey.toAuctionRelativeDay(), count: items.count, collapsed: isCollapsed) {
+                        if isCollapsed { collapsedDates.remove(dateKey) } else { collapsedDates.insert(dateKey) }
+                    }) {
+                        if !isCollapsed {
+                            sectionRows(for: items)
+                        }
                     }
                 }
             }
         }
         .listStyle(.plain)
         .listSectionSpacing(.custom(0))
-        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Make, model, VIN, year")
         .navigationTitle(favoritesOnly ? "FAVORITES" : "HPD AUCTION")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                filterSortMenu
-            }
-        }
         .refreshable {
             await supabaseService.syncFetchFavoritesFromSupabase()
         }
+        } // end else (isLoading && entries.isEmpty)
     }
 
 
@@ -1958,8 +2134,44 @@ struct HPDView: View {
         }
     }
 
+    private func executeHeartbeat() {
+        Task {
+            let banned = await supabaseService.pingActivityAndCheckBan()
+            if banned {
+                isUserBanned = true
+                supabaseService.clearAllLocalState()
+                try? await supabase.auth.signOut()
+            } else {
+                isUserBanned = false
+            }
+        }
+    }
+
     @ViewBuilder private var mainContent: some View {
         VStack(spacing: 0) {
+            // 1. Fixed header inside mainContent
+            VStack(spacing: 10) {
+                HStack(spacing: 12) {
+                    SearchBar(
+                        text: $searchText,
+                        placeholder: favoritesOnly ? "Search in favorites..." : "Search VIN, Lot, etc."
+                    )
+                    Button {
+                        isUserNavigatingFromHeader = true
+                        showFilter = true
+                    } label: {
+                        Image(systemName: showFilterIndicator ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                            .font(.title3)
+                            .foregroundStyle(showFilterIndicator ? Color.accentColor : Color.secondary)
+                            .padding(10)
+                            .background(Color(.systemGray6))
+                            .clipShape(Circle())
+                    }
+                }
+                .padding(.horizontal, 16)
+
+            }
+
             if isLoading {
                 ProgressView()
                     .padding(.vertical, 8)
@@ -1979,18 +2191,28 @@ struct HPDView: View {
                 }
             }
             if entries.isEmpty { autoFetch() }
+            if !hideWelcomeScreen && !Self.hasShownWelcomeThisSession {
+                Self.hasShownWelcomeThisSession = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    showWelcomeSheet = true
+                }
+            }
         }
         .task {
+            executeHeartbeat()
             await supabaseService.syncFetchFavoritesFromSupabase()
         }
-        .sheet(isPresented: $showLocationFilterSheet) {
+        .sheet(isPresented: $showFilter) {
             LocationFilterSheet(
                 addresses: uniqueAddresses,
                 selectedFilters: Binding(
                     get: { selectedLocationFilters },
                     set: { selectedLocationFilters = $0 }
                 ),
-                onDismiss: { showLocationFilterSheet = false }
+                onDismiss: {
+                    showFilter = false
+                    showLocationFilterSheet = false
+                }
             )
         }
         .onChange(of: searchText) { _, _ in
@@ -2002,12 +2224,19 @@ struct HPDView: View {
         .onChange(of: hpdRefreshTrigger) { _, _ in
             autoFetch(force: true)
         }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active { executeHeartbeat() }
+        }
     }
 
     var body: some View {
         ZStack {
             NavigationStack {
                 mainContent
+            }
+            .sheet(isPresented: $showWelcomeSheet) {
+                WelcomeOnboardingView()
+                    .interactiveDismissDisabled()
             }
 
             if extractionState != .idle {
@@ -2072,6 +2301,8 @@ struct HPDView: View {
                         if let v = spvVIN, var info = supabaseService.odoByVIN[v] {
                             info.privateValue = price
                             supabaseService.setOdoInfo(info, forVIN: v)
+                            supabaseService.recordExtractionUsage(vin: v)
+                            VINFailureTracker.shared.clearFailures(vin: v)
                             lastProcessedVIN = v
                         }
                         lastProcessingVIN = nil
@@ -2114,6 +2345,7 @@ struct HPDView: View {
                                 spvVIN = v
                                 spvOdo = odo
                                 extractionState = .fetchingPrice
+                                startWatchdogTimer(for: .fetchingPrice, token: extractionCancelToken)
                             }
                         }
                     }
@@ -2176,6 +2408,13 @@ struct HPDView: View {
         } message: {
             Text(extractionError ?? "")
         }
+        .alert("Extraction Failed", isPresented: $showExtractionErrorAlert) {
+            Button("OK", role: .cancel) {
+                extractionErrorMessage = nil
+            }
+        } message: {
+            Text(extractionErrorMessage ?? "An unknown error occurred.")
+        }
         // Web VIN confirmation
         .confirmationDialog("Open stat.vin", isPresented: $showWebConfirm, titleVisibility: .visible) {
             Button("Open Report") {
@@ -2214,7 +2453,7 @@ struct HPDView: View {
         .alert("Data Information", isPresented: $showQuickDataInfo) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("• Mileage: Last recorded odometer reading during state inspection.\n• Value: Estimated DMV Private Party Value.\n\nNOTE: This is historical data from third-party public records. It does not reflect current real-time conditions, and we do not guarantee its accuracy. Always verify physically.")
+            Text("• Mileage: Last recorded odometer during state inspection.\n• Value: Estimated DMV Private Party Value.\n\nUSAGE LIMITS:\nTo ensure system stability, you are limited to 50 successful data extractions per day, and a maximum of 5 successful extractions per specific vehicle. Failed attempts do not count against your limit.\n\nNOTE: This is historical data from third-party public records. We do not guarantee its accuracy.")
         }
         .alert("Legal Disclaimer", isPresented: $showLegalDisclaimer) {
             Button("Cancel", role: .cancel) {
@@ -2235,6 +2474,7 @@ struct HPDView: View {
                     DispatchQueue.main.async {
                         extractionState = .fetchingOdometer
                     }
+                    startWatchdogTimer(for: .fetchingOdometer, token: extractionCancelToken)
                     pendingExtractionEntry = nil
                 }
             }
@@ -2556,7 +2796,11 @@ struct HPDView: View {
                         .font(.headline)
                         .lineLimit(1)
                         .minimumScaleFactor(0.82)
-                    Text(sanitizedAddressForMaps(e.lotAddress))
+
+                    let addr = sanitizedAddressForMaps(e.lotAddress)
+                    let displayAddr = addr.isEmpty ? (e.lotAddress.isEmpty ? e.lotName : e.lotAddress) : addr
+
+                    Text(displayAddr)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -2659,13 +2903,32 @@ struct HPDView: View {
                 // Action buttons
                 HStack(spacing: 8) {
                     Button {
-                        hapticImpact(.medium)
-                        pendingExtractionEntry = e
-                        showLegalDisclaimer = true
+                        let failStatus = VINFailureTracker.shared.status(for: normalizeVIN(e.vin))
+                        if !failStatus.canTry {
+                            UINotificationFeedbackGenerator().notificationOccurred(.error)
+                            extractionErrorMessage = failStatus.errorMessage
+                            showExtractionErrorAlert = true
+                            return
+                        }
+                        Task {
+                            let limitStatus = await supabaseService.checkExtractionLimits(vin: normalizeVIN(e.vin))
+                            await MainActor.run {
+                                if limitStatus.allowed {
+                                    hapticImpact(.medium)
+                                    pendingExtractionEntry = e
+                                    showLegalDisclaimer = true
+                                } else {
+                                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                                    extractionErrorMessage = limitStatus.reason ?? "Extraction limit reached."
+                                    showExtractionErrorAlert = true
+                                }
+                            }
+                        }
                     } label: {
                         Image(systemName: "hammer.fill")
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(VINFailureTracker.shared.status(for: normalizeVIN(e.vin)).isRed ? .red : .blue)
                     .disabled(flowInProgress)
                     .frame(maxWidth: .infinity)
 
@@ -2759,8 +3022,34 @@ struct HPDView: View {
     }
 
     private func failExtraction(_ message: String) {
+        if let vin = lastProcessingVIN, !vin.isEmpty {
+            VINFailureTracker.shared.recordFailure(vin: vin)
+        }
         extractionError = message
         cancelExtraction()
+    }
+
+    private func startWatchdogTimer(for state: ExtractionState, token: UUID) {
+        Task {
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            await MainActor.run {
+                if self.extractionCancelToken == token && self.extractionState == state {
+                    if let vin = self.lastProcessingVIN, !vin.isEmpty {
+                        VINFailureTracker.shared.recordFailure(vin: vin)
+                    }
+                    self.extractionState = .idle
+                    self.pendingExtractionEntry = nil
+                    if state == .fetchingOdometer {
+                        self.extractionErrorMessage = "Odometer Fetch Failed: The TX state inspection server did not respond within 8 seconds, or no recent mileage records exist for this VIN."
+                    } else if state == .fetchingPrice {
+                        self.extractionErrorMessage = "Value Fetch Failed: The DMV valuation server timed out. The vehicle might not have a calculable private party value at this time."
+                    } else {
+                        self.extractionErrorMessage = "Extraction timed out after 8 seconds. Please check your connection and try again."
+                    }
+                    self.showExtractionErrorAlert = true
+                }
+            }
+        }
     }
 
     private func fetch() {

@@ -25,6 +25,20 @@ let supabase = SupabaseClient(
 
 
 
+// MARK: - Rate Limit Response
+
+struct RateLimitResponse: Codable {
+    let allowed: Bool
+    let reason: String?
+}
+
+// MARK: - User Usage Profile
+
+struct UserUsageProfile: Codable {
+    let scrape_count_today: Int
+    let last_scrape_reset: String?
+}
+
 // MARK: - Favorites Table Row Model
 
 struct FavoriteRow: Codable {
@@ -45,6 +59,7 @@ struct FavoriteRow: Codable {
     // Published state — HPDView observes these directly
     @Published private(set) var favorites: Set<String> = []
     @Published private(set) var odoByVIN: [String: OdoInfo] = [:]
+    @Published private(set) var currentProfile: UserUsageProfile? = nil
 
     // UserDefaults keys (same as the old @AppStorage keys so data migrates automatically)
     private let favKey  = "hpdFavorites"
@@ -282,6 +297,25 @@ struct FavoriteRow: Codable {
         }
     }
 
+    func pingActivityAndCheckBan() async -> Bool {
+        do {
+            let isBanned: Bool = try await supabase.rpc("ping_activity").execute().value
+            return isBanned
+        } catch {
+            return false
+        }
+    }
+
+    func syncToggleBan(userId: UUID, isBanned: Bool) async {
+        do {
+            try await supabase
+                .rpc("toggle_user_ban", params: ["target_user_id": userId.uuidString, "ban_status": isBanned ? "true" : "false"])
+                .execute()
+        } catch {
+            print("🔴 RPC Error toggling ban: \(error)")
+        }
+    }
+
     // MARK: - Supabase Sync: Upsert full detail
 
     /// Upserts a full-detail row including odometer and private value from the local cache.
@@ -323,5 +357,37 @@ struct FavoriteRow: Codable {
 
     private func persistOdo() {
         UserDefaults.standard.set(try? JSONEncoder().encode(odoByVIN), forKey: odoKey)
+    }
+
+    // MARK: - User Usage Profile
+
+    func fetchCurrentProfile() async {
+        do {
+            let profiles: [UserUsageProfile] = try await supabase.rpc("get_my_usage_profile").execute().value
+            await MainActor.run { self.currentProfile = profiles.first }
+        } catch {
+            print("🔴 fetchCurrentProfile failed: \(error)")
+        }
+    }
+
+    // MARK: - Extraction Rate Limiting (Supabase-backed)
+
+    func checkExtractionLimits(vin: String) async -> RateLimitResponse {
+        do {
+            return try await supabase.rpc("can_extract_data", params: ["target_vin": vin]).execute().value
+        } catch {
+            print("🔴 Limit check failed: \(error)")
+            return RateLimitResponse(allowed: true, reason: nil) // Fail open on network errors
+        }
+    }
+
+    func recordExtractionUsage(vin: String) {
+        Task(priority: .background) {
+            _ = try? await supabase.rpc("record_data_extraction", params: ["target_vin": vin]).execute()
+        }
+    }
+
+    func resetUserLimits(userId: UUID) async {
+        _ = try? await supabase.rpc("reset_user_limits", params: ["target_user_id": userId.uuidString]).execute()
     }
 }
