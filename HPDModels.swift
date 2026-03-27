@@ -51,6 +51,14 @@ func normalizedYear(_ raw: String) -> String {
     return t
 }
 
+func isDateInPast(_ dateString: String) -> Bool {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "MM/dd/yyyy"
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    guard let date = formatter.date(from: dateString) else { return false }
+    return Calendar.current.startOfDay(for: date) < Calendar.current.startOfDay(for: Date())
+}
+
 /// Formats a raw numeric price string for display (e.g., "4200" → "$4,200").
 func formatPrivateValueForDisplay(_ s: String) -> String {
     let t = s.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -33,11 +33,11 @@ struct ContentView: View {
             } else if isAuthenticated {
                 TabView {
                     HPDView()
-                        .tabItem { Label("HPD Auction", systemImage: "car.fill") }
+                        .tabItem { Label("HPD AUCTION", systemImage: "car.fill") }
                     HPDView(favoritesOnly: true)
-                        .tabItem { Label("Favorites", systemImage: "star.fill") }
+                        .tabItem { Label("FAVORITES", systemImage: "star.fill") }
                     HPDSettingsView()
-                        .tabItem { Label("Settings", systemImage: "gearshape.fill") }
+                        .tabItem { Label("SETTINGS", systemImage: "gearshape.fill") }
                 }
                 .environmentObject(supabaseService)
             } else {

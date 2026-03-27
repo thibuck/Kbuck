@@ -240,6 +240,34 @@ struct FavoriteRow: Codable {
         }
     }
 
+    func syncCleanUpExpiredFavorites(activeVINs: Set<String>) {
+        let expiredVINs = favorites.subtracting(activeVINs)
+        guard !expiredVINs.isEmpty else { return }
+        guard let uid = currentUserID else { return }
+
+        Task(priority: .background) {
+            do {
+                let expiredArray = Array(expiredVINs)
+                try await supabase
+                    .from("favorites_kbuck")
+                    .delete()
+                    .eq("user_id", value: uid.uuidString)
+                    .in("vin", values: expiredArray)
+                    .execute()
+                print("🟢 SUPABASE SUCCESS: Purged \\(expiredVINs.count) expired favorites.")
+
+                await MainActor.run {
+                    self.favorites.subtract(expiredVINs)
+                    for vin in expiredVINs { self.odoByVIN.removeValue(forKey: vin) }
+                    self.persistFavorites()
+                    self.persistOdo()
+                }
+            } catch {
+                print("🔴 SUPABASE ERROR purging favorites: \\(error.localizedDescription)")
+            }
+        }
+    }
+
     func syncLogLegalAgreement(vin: String) {
         let uid = currentUserID
         let cleanVIN = normalizeVIN(vin)

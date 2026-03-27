@@ -1285,6 +1285,7 @@ struct HPDView: View {
     @State private var webVIN: String? = nil
     @State private var showWebConfirm: Bool = false
     @State private var showMapConfirm: Bool = false
+    @State private var showQuickDataInfo: Bool = false
     @State private var pendingMapAddress: String = ""
     @State private var pendingMapTime: String = ""
     @State private var statVinURL: URL? = nil
@@ -1910,7 +1911,7 @@ struct HPDView: View {
         .listStyle(.plain)
         .listSectionSpacing(.custom(0))
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Make, model, VIN, year")
-        .navigationTitle(favoritesOnly ? "Favorites" : "HPD AUCTION")
+        .navigationTitle(favoritesOnly ? "FAVORITES" : "HPD AUCTION")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -1970,7 +1971,7 @@ struct HPDView: View {
             lastProcessedVIN = nil
             extractionState = .idle
             if entries.isEmpty && !hpdCachedEntriesData.isEmpty {
-                entries = decodeCachedEntries(hpdCachedEntriesData)
+                entries = decodeCachedEntries(hpdCachedEntriesData).filter { !isDateInPast($0.dateScheduled) }
                 entries = entries.map { e in
                     var copy = e
                     if let nd = HPDParser.normalizeUSDate(e.dateScheduled) { copy.dateScheduled = nd }
@@ -2210,6 +2211,11 @@ struct HPDView: View {
                 Text("Would you like to navigate to \(pendingMapAddress) @ \(pendingMapTime)?")
             }
         }
+        .alert("Data Information", isPresented: $showQuickDataInfo) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("• Mileage: Last recorded odometer reading during state inspection.\n• Value: Estimated DMV Private Party Value.\n\nNOTE: This is historical data from third-party public records. It does not reflect current real-time conditions, and we do not guarantee its accuracy. Always verify physically.")
+        }
         .alert("Legal Disclaimer", isPresented: $showLegalDisclaimer) {
             Button("Cancel", role: .cancel) {
                 pendingExtractionEntry = nil
@@ -2295,7 +2301,7 @@ struct HPDView: View {
             df.locale = Locale(identifier: "en_US_POSIX")
             df.dateFormat = "MM/dd/yyyy"
             let asc = sortAscending
-            return entries
+            return entries.filter { !isDateInPast($0.dateScheduled) }
                 .filter { supabaseService.favorites.contains(normalizeVIN($0.vin)) }
                 .filter { !isCardEmpty($0) }
                 .sorted { a, b in
@@ -2328,14 +2334,18 @@ struct HPDView: View {
                 }
         }
 
+        // Main tab excludes favorites to enforce strict separation
+        var entriesToFilter = entries.filter { !isDateInPast($0.dateScheduled) }
+        entriesToFilter = entriesToFilter.filter { !supabaseService.favorites.contains(normalizeVIN($0.vin)) }
+
         // a) Search bar
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let afterSearch: [HPDEntry]
         if q.isEmpty {
-            afterSearch = entries
+            afterSearch = entriesToFilter
         } else {
             let lq = q.lowercased()
-            afterSearch = entries.filter { e in
+            afterSearch = entriesToFilter.filter { e in
                 e.make.lowercased().contains(lq)
                     || e.model.lowercased().contains(lq)
                     || normalizedYear(e.year).lowercased().contains(lq)
@@ -2700,6 +2710,14 @@ struct HPDView: View {
                     }
                     .buttonStyle(.bordered)
                     .frame(maxWidth: .infinity)
+
+                    Button {
+                        showQuickDataInfo = true
+                    } label: {
+                        Image(systemName: "info.circle.fill")
+                    }
+                    .buttonStyle(.bordered)
+                    .frame(maxWidth: .infinity)
                 }
             }
         }
@@ -2775,11 +2793,16 @@ struct HPDView: View {
                     let (data, response) = try await URLSession.shared.data(for: request)
                     let (decoded, _) = decodeResponseData(data, response: response)
                     let parsed = HPDParser.parse(decoded)
+                    let validEntries = parsed.filter { !isDateInPast($0.dateScheduled) }
+                    let activeVINs = Set(validEntries.map { normalizeVIN($0.vin) })
+                    await MainActor.run {
+                        supabaseService.syncCleanUpExpiredFavorites(activeVINs: activeVINs)
+                    }
 
                     if !parsed.isEmpty {
                         await MainActor.run {
-                            self.entries = parsed
-                            self.hpdCachedEntriesData = encodeEntries(parsed)
+                            self.entries = validEntries
+                            self.hpdCachedEntriesData = encodeEntries(validEntries)
                             self.hpdCachedURL = trimmed
                             self.hpdLastFetchTS = Date().timeIntervalSince1970
                             self.errorMessage = nil
