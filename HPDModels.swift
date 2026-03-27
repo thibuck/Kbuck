@@ -28,6 +28,12 @@ struct OdoInfo: Codable, Equatable {
     var privateValue: String?
 }
 
+struct LegalAgreementLog: Codable {
+    var user_id: UUID?
+    var vin: String
+    var action: String
+}
+
 // MARK: - Shared Utility Functions
 
 /// Normalizes a VIN to uppercase alphanumeric, excluding I, O, Q per VIN specification.

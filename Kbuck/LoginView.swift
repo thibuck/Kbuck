@@ -10,6 +10,8 @@ struct LoginView: View {
     // Both callbacks are dispatched on the main actor, so @State is safe.
     @State private var currentNonce: String = ""
     @State private var authError: String?
+    @State private var acceptedTerms: Bool = false
+    @State private var showTerms: Bool = false
 
     var body: some View {
         VStack(spacing: 32) {
@@ -25,6 +27,27 @@ struct LoginView: View {
                 .font(.largeTitle.bold())
 
             Spacer()
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Button {
+                    acceptedTerms.toggle()
+                } label: {
+                    Image(systemName: acceptedTerms ? "checkmark.square.fill" : "square")
+                        .font(.title3)
+                }
+                .buttonStyle(.plain)
+
+                Text("I have read and agree to the")
+                    .font(.footnote)
+
+                Button("Terms & Conditions") {
+                    showTerms = true
+                }
+                .font(.footnote)
+                .buttonStyle(.plain)
+                .foregroundStyle(.blue)
+            }
+            .padding(.horizontal, 40)
 
             SignInWithAppleButton(
                 .signIn,
@@ -76,6 +99,9 @@ struct LoginView: View {
             .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
             .frame(height: 50)
             .padding(.horizontal, 40)
+            .disabled(!acceptedTerms)
+            .opacity(acceptedTerms ? 1.0 : 0.5)
+            .allowsHitTesting(acceptedTerms)
 
             if let err = authError {
                 Text(err)
@@ -107,6 +133,9 @@ struct LoginView: View {
 #endif
 
             Spacer().frame(height: 48)
+        }
+        .sheet(isPresented: $showTerms) {
+            LegalTermsView()
         }
     }
 

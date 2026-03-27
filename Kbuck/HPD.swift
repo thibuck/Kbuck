@@ -1278,12 +1278,17 @@ struct HPDView: View {
     // Quick Inventory
     @State private var showQuickInventory: Bool = false
 
-    // Info alerts, copy-VIN feedback, web confirmation
-    @State private var infoMessage: String = ""
-    @State private var showInfoAlert: Bool = false
+    // Legal disclaimer, copy-VIN feedback, web confirmation
+    @State private var showLegalDisclaimer: Bool = false
+    @State private var pendingExtractionEntry: HPDEntry? = nil
     @State private var copiedVIN: String? = nil
     @State private var webVIN: String? = nil
     @State private var showWebConfirm: Bool = false
+    @State private var showMapConfirm: Bool = false
+    @State private var pendingMapAddress: String = ""
+    @State private var pendingMapTime: String = ""
+    @State private var statVinURL: URL? = nil
+    @AppStorage("openWebInSafari") private var openWebInSafari: Bool = false
 
     enum SortKey: String { case date, year, make, model, priced, favorites }
     private let cardFixedHeight: CGFloat = 180
@@ -1842,7 +1847,7 @@ struct HPDView: View {
     @ViewBuilder private func sectionRows(for items: [HPDEntry]) -> some View {
         ForEach(items) { e in
             card(for: e)
-                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                 .listRowSeparator(.hidden)
         }
     }
@@ -2012,7 +2017,7 @@ struct HPDView: View {
 
                     if extractionState == .waitingForCaptcha {
                         VStack {
-                            Text("Please interact with the window below to continue...")
+                            Text("Please check the CAPTCHA box and press the blue Submit button below!")
                                 .font(.headline)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 10)
@@ -2159,12 +2164,6 @@ struct HPDView: View {
         } message: {
             Text(pendingCalendarLabel)
         }
-        // Info disclaimer alert
-        .alert("Information", isPresented: $showInfoAlert) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(infoMessage)
-        }
         .alert("Extraction Error", isPresented: Binding(get: {
             extractionError != nil
         }, set: { newValue in
@@ -2178,14 +2177,65 @@ struct HPDView: View {
         }
         // Web VIN confirmation
         .confirmationDialog("Open stat.vin", isPresented: $showWebConfirm, titleVisibility: .visible) {
-            Button("Open in Safari") {
+            Button("Open Report") {
                 if let vin = webVIN, let url = URL(string: "https://stat.vin/cars/\(vin)") {
-                    UIApplication.shared.open(url)
+                    if openWebInSafari {
+                        UIApplication.shared.open(url)
+                    } else {
+                        statVinURL = url
+                    }
                 }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Do you want to view the report for this VIN in your browser?")
+            Text("Do you want to view the report for this VIN?")
+        }
+        .sheet(isPresented: Binding(get: { statVinURL != nil }, set: { if !$0 { statVinURL = nil } })) {
+            if let url = statVinURL {
+                SafariView(url: url).ignoresSafeArea()
+            }
+        }
+        .alert("Navigate", isPresented: $showMapConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Navigate") {
+                let q = pendingMapAddress.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? pendingMapAddress
+                if let url = URL(string: "http://maps.apple.com/?q=\(q)") {
+                    UIApplication.shared.open(url)
+                }
+            }
+        } message: {
+            if pendingMapTime.isEmpty {
+                Text("Would you like to navigate to \(pendingMapAddress)?")
+            } else {
+                Text("Would you like to navigate to \(pendingMapAddress) @ \(pendingMapTime)?")
+            }
+        }
+        .alert("Legal Disclaimer", isPresented: $showLegalDisclaimer) {
+            Button("Cancel", role: .cancel) {
+                pendingExtractionEntry = nil
+            }
+            Button("Accept & Fetch") {
+                if let e = pendingExtractionEntry {
+                    let sanitizedVIN  = normalizeVIN(e.vin)
+                    supabaseService.syncLogLegalAgreement(vin: sanitizedVIN)
+                    UIPasteboard.general.string = sanitizedVIN
+                    extractionError = nil
+                    extractionCancelToken = UUID()
+                    mileageForceStartToken = UUID()
+                    mileageVIN        = sanitizedVIN
+                    spvVIN            = nil
+                    spvOdo            = nil
+                    lastProcessingVIN = sanitizedVIN
+                    DispatchQueue.main.async {
+                        extractionState = .fetchingOdometer
+                    }
+                    pendingExtractionEntry = nil
+                }
+            }
+        } message: {
+            if let e = pendingExtractionEntry {
+                Text("You are about to fetch the last recorded inspection date, reported mileage, and an estimated DMV Private Value for the \(normalizedYear(e.year)) \(e.make) \(e.model).\n\nDISCLAIMER:\nThis data is retrieved from public third-party sources and is provided 'AS IS' strictly for informational purposes.\n\nNO WARRANTIES:\nWe make no warranties regarding its accuracy, completeness, or current validity.\n\nLIABILITY:\nBy proceeding, you agree that we accept no liability for any decisions made based on this data.")
+            }
         }
     }
 
@@ -2469,8 +2519,9 @@ struct HPDView: View {
         let processed = lastProcessedVIN == cardKey
         let expanded  = expandedLocationIDs.contains(e.id)
         let odoInfo   = supabaseService.odoByVIN[e.vin] ?? supabaseService.odoByVIN[cardKey]
+        let yearStr   = normalizedYear(e.year)
         let shareText: String = {
-            var parts = ["\(normalizedYear(e.year)) \(e.make) \(e.model)", "VIN: \(e.vin)"]
+            var parts = ["\(yearStr) \(e.make) \(e.model)", "VIN: \(e.vin)"]
             if let odo = odoInfo {
                 parts.append("Miles: \(odo.odometer.formatWithCommas())")
                 let price = odo.privateValue.formatAsCurrency()
@@ -2479,34 +2530,42 @@ struct HPDView: View {
             return parts.joined(separator: "\n")
         }()
 
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
 
-            // Row 1: Logo | Title | Star (tap title area to expand, star is independent)
-            HStack(alignment: .center, spacing: 12) {
-                Button {
-                    hapticImpact(.light)
-                    if expandedLocationIDs.contains(e.id) {
-                        expandedLocationIDs.remove(e.id)
-                    } else {
-                        expandedLocationIDs.insert(e.id)
-                    }
-                } label: {
-                    HStack(alignment: .center, spacing: 12) {
-                        if let asset = brandAssetName(for: e.make) {
-                            Image(asset)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: 44, height: 28)
-                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            // MARK: Header (always visible) — tap anywhere to expand/collapse
+            HStack(alignment: .center, spacing: 10) {
+                if let asset = brandAssetName(for: e.make) {
+                    Image(asset)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 44, height: 28)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(yearStr) \(e.make) \(e.model)".uppercased())
+                        .font(.headline)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+                    Text(sanitizedAddressForMaps(e.lotAddress))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                if let info = odoInfo {
+                    let odoK = formatOdoK(info.odometer)
+                    if odoK != "no odo" {
+                        HStack(spacing: 4) {
+                            Image(systemName: "fuelpump.fill")
+                                .foregroundStyle(.secondary)
+                                .font(.headline)
+                            Text(odoK)
+                                .font(.headline)
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
                         }
-                        Text("\(normalizedYear(e.year)) \(e.make) \(e.model)")
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.82)
-                        Spacer(minLength: 4)
                     }
                 }
-                .buttonStyle(.plain)
-
                 Button {
                     hapticImpact(.light)
                     if isFav {
@@ -2515,164 +2574,132 @@ struct HPDView: View {
                     } else {
                         pendingFavoriteKey   = cardKey
                         pendingFavoriteEntry = e
-                        pendingFavoriteLabel = "\(normalizedYear(e.year)) \(e.make) \(e.model) - \(e.vin)"
+                        pendingFavoriteLabel = "\(yearStr) \(e.make) \(e.model) - \(e.vin)"
                         showFavoriteConfirm  = true
                     }
                 } label: {
                     Image(systemName: "star.fill")
+                        .font(.title2)
                         .foregroundStyle(isFav ? AnyShapeStyle(.yellow) : AnyShapeStyle(.secondary))
                 }
                 .buttonStyle(.plain)
             }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                hapticImpact(.light)
+                if expandedLocationIDs.contains(e.id) {
+                    expandedLocationIDs.remove(e.id)
+                } else {
+                    expandedLocationIDs.insert(e.id)
+                }
+            }
 
-            // Row 2: VIN (monospaced) + dedicated copy button
-            HStack(spacing: 8) {
-                Text("VIN: \(e.vin)")
-                    .monospaced()
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                Button {
-                    withAnimation(.snappy) { copiedVIN = e.vin }
+            // MARK: Expanded content
+            if expanded {
+                Divider()
+
+                // VIN row — tap to copy, no button icon
+                HStack(spacing: 6) {
+                    Image(systemName: "tag.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Text(e.vin)
+                        .font(.subheadline)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    if copiedVIN == e.vin {
+                        Text("Copied!")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
                     UIPasteboard.general.string = e.vin
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    copiedVIN = e.vin
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: 2_000_000_000)
                         copiedVIN = nil
                     }
-                } label: {
-                    Image(systemName: copiedVIN == e.vin ? "checkmark.circle.fill" : "doc.on.doc.fill")
                 }
-                .buttonStyle(.plain)
-            }
 
-            // Row 3: Data rows — fill icons + live info buttons
-            if let odo = odoInfo {
-                VStack(alignment: .leading, spacing: 8) {
+                // Odometer, inspection date, private value
+                if let odo = odoInfo {
                     HStack(spacing: 6) {
-                        Image(systemName: "speedometer")
+                        Image(systemName: "fuelpump.fill")
+                            .foregroundStyle(.secondary)
                         Text(odo.odometer.formatWithCommas() + " miles")
-                        Spacer(minLength: 0)
-                        Button {
-                            infoMessage  = "Obtained from the last inspection report. This does not guarantee the current actual mileage."
-                            showInfoAlert = true
-                        } label: { Image(systemName: "info.circle.fill") }
-                        .buttonStyle(.plain)
                     }
                     HStack(spacing: 6) {
                         Image(systemName: "clock.fill")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                         Text("\(odo.testDate.dateOnly) \(odo.testDate.dateOnly.timeAgoShort())")
-                        Spacer(minLength: 0)
-                        Button {
-                            infoMessage  = "Date of the last recorded inspection."
-                            showInfoAlert = true
-                        } label: { Image(systemName: "info.circle.fill") }
-                        .buttonStyle(.plain)
                     }
                     HStack(spacing: 6) {
-                        Image(systemName: "tag.fill")
+                        Image(systemName: "banknote.fill")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                         Text(odo.privateValue.formatAsCurrency())
-                        Spacer(minLength: 0)
-                        Button {
-                            infoMessage  = "DMV Private Value, based on the last inspection date and reported mileage."
-                            showInfoAlert = true
-                        } label: { Image(systemName: "info.circle.fill") }
-                        .buttonStyle(.plain)
                     }
                 }
-            }
 
-            // Expanded: location + action grid
-            if expanded {
-                VStack(alignment: .leading, spacing: 12) {
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        let addrForCard = sanitizedAddressForMaps(e.lotAddress)
-                        let mapLabel    = addrForCard.isEmpty
-                            ? (e.lotName.isEmpty ? "Open in Maps" : e.lotName)
-                            : addrForCard
-                        let mapQuery    = addrForCard.isEmpty
-                            ? (e.lotName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                ? "Auto Storage Houston TX"
-                                : e.lotName.trimmingCharacters(in: .whitespacesAndNewlines))
-                            : addrForCard
-                        Button {
-                            haptic(.medium)
-                            let q = mapQuery.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? mapQuery
-                            if let url = URL(string: "http://maps.apple.com/?q=\(q)") {
-                                UIApplication.shared.open(url)
-                            }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "map.fill")
-                                Text(mapLabel)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-                        }
-                        .buttonStyle(.plain)
-
-                        if let t = e.time, !t.isEmpty {
-                            HStack(spacing: 6) {
-                                Image(systemName: "clock.fill")
-                                Text(t)
-                            }
-                        }
+                // Action buttons
+                HStack(spacing: 8) {
+                    Button {
+                        hapticImpact(.medium)
+                        pendingExtractionEntry = e
+                        showLegalDisclaimer = true
+                    } label: {
+                        Image(systemName: "hammer.fill")
                     }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(flowInProgress)
+                    .frame(maxWidth: .infinity)
 
-                    HStack(spacing: 8) {
-                        // Process
-                        Button {
-                            hapticImpact(.medium)
-                            let sanitizedVIN  = normalizeVIN(e.vin)
-                            UIPasteboard.general.string = sanitizedVIN
-                            extractionError = nil
-                            extractionCancelToken = UUID()
-                            mileageForceStartToken = UUID()
-                            mileageVIN        = sanitizedVIN
-                            spvVIN            = nil
-                            spvOdo            = nil
-                            lastProcessingVIN = sanitizedVIN
-                            DispatchQueue.main.async {
-                                extractionState = .fetchingOdometer
-                            }
-                        } label: {
-                            Image(systemName: "hammer.fill")
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(flowInProgress)
-                        .frame(maxWidth: .infinity)
-
-                        // Share (native sheet)
-                        ShareLink(item: shareText) {
-                            Image(systemName: "square.and.arrow.up.fill")
-                        }
-                        .buttonStyle(.bordered)
-                        .frame(maxWidth: .infinity)
-
-                        // Calendar
-                        Button {
-                            hapticImpact(.light)
-                            pendingCalendarEntry = e
-                            pendingCalendarLabel = "\(normalizedYear(e.year)) \(e.make) \(e.model) — \(e.dateScheduled)"
-                            showCalendarConfirm  = true
-                        } label: {
-                            Image(systemName: "calendar.badge.plus")
-                        }
-                        .buttonStyle(.bordered)
-                        .frame(maxWidth: .infinity)
-
-                        // Web
-                        Button {
-                            hapticImpact(.light)
-                            webVIN         = e.vin
-                            showWebConfirm = true
-                        } label: {
-                            Image(systemName: "globe")
-                        }
-                        .buttonStyle(.bordered)
-                        .frame(maxWidth: .infinity)
+                    ShareLink(item: shareText) {
+                        Image(systemName: "square.and.arrow.up.fill")
                     }
+                    .buttonStyle(.bordered)
+                    .frame(maxWidth: .infinity)
+
+                    Button {
+                        hapticImpact(.light)
+                        pendingCalendarEntry = e
+                        pendingCalendarLabel = "\(yearStr) \(e.make) \(e.model) — \(e.dateScheduled)"
+                        showCalendarConfirm  = true
+                    } label: {
+                        Image(systemName: "calendar.badge.plus")
+                    }
+                    .buttonStyle(.bordered)
+                    .frame(maxWidth: .infinity)
+
+                    Button {
+                        hapticImpact(.light)
+                        webVIN         = e.vin
+                        showWebConfirm = true
+                    } label: {
+                        Image(systemName: "globe")
+                    }
+                    .buttonStyle(.bordered)
+                    .frame(maxWidth: .infinity)
+
+                    Button {
+                        hapticImpact(.light)
+                        pendingMapAddress = sanitizedAddressForMaps(e.lotAddress)
+                        if pendingMapAddress.isEmpty { pendingMapAddress = e.lotName }
+                        pendingMapTime = (e.time ?? "")
+                            .replacingOccurrences(of: ":00", with: "")
+                            .replacingOccurrences(of: " AM", with: "am")
+                            .replacingOccurrences(of: " PM", with: "pm")
+                        showMapConfirm = true
+                    } label: {
+                        Image(systemName: "location.fill")
+                    }
+                    .buttonStyle(.bordered)
+                    .frame(maxWidth: .infinity)
                 }
             }
         }
@@ -2686,7 +2713,6 @@ struct HPDView: View {
                 .stroke(processed ? Color.blue.opacity(0.4) : Color.clear, lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
-        .padding(.horizontal)
     }
 
     private var extractionOverlayMessage: String {

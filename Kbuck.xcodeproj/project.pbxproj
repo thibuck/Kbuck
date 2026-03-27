@@ -468,7 +468,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Kbuck/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Kbuck;
+				INFOPLIST_KEY_CFBundleDisplayName = "HDP Auction";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = NSCalendarsUsageDescription;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -528,7 +528,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Kbuck/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Kbuck;
+				INFOPLIST_KEY_CFBundleDisplayName = "HDP Auction";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = NSCalendarsUsageDescription;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;

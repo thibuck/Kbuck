@@ -1,6 +1,50 @@
 import SwiftUI
 import Supabase
 
+struct LegalTermsView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Terms & Conditions")
+                        .font(.title2.bold())
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Data Source Disclaimer")
+                            .font(.headline)
+                        Text("Vehicle-related data, including inspection date, reported mileage, and estimated DMV Private Value, may be retrieved from public third-party sources. This information is provided strictly for informational purposes and may not reflect current conditions.")
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("No Warranties")
+                            .font(.headline)
+                        Text("All information is provided 'AS IS' and 'AS AVAILABLE' without warranties of any kind, express or implied, including but not limited to accuracy, completeness, reliability, fitness for a particular purpose, merchantability, or non-infringement.")
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Limitation of Liability")
+                            .font(.headline)
+                        Text("By using this app and proceeding with data retrieval, you acknowledge and agree that the app provider is not responsible for any losses, damages, claims, or decisions arising from reliance on third-party data. You assume full responsibility for independently verifying all information before taking any action.")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+            }
+            .navigationTitle("Legal")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
 struct HPDSettingsView: View {
     @EnvironmentObject private var supabaseService: SupabaseService
 
@@ -13,11 +57,13 @@ struct HPDSettingsView: View {
     @AppStorage("hpdHadLastError")     private var hpdHadLastError: Bool = false
     @AppStorage("hpdRefreshTrigger")   private var refreshTrigger: Int = 0
     @AppStorage("hpdCachedURL")        private var hpdCachedURL: String = ""
+    @AppStorage("openWebInSafari")     private var openWebInSafari: Bool = false
 
     // Local state
     @State private var showClearOdoAlert = false
     @State private var showSignOutAlert  = false
     @State private var showHPDWeb: Bool  = false
+    @State private var showTerms: Bool   = false
 
     private let defaultURLString = "https://www.houstontx.gov/police/auto_dealers_detail/Vehicles_Scheduled_For_Auction.htm"
 
@@ -87,6 +133,16 @@ struct HPDSettingsView: View {
                     }
                 }
 
+                Section(header: Text("Browser Preferences")) {
+                    Toggle("Force External Safari for Reports", isOn: $openWebInSafari)
+                }
+
+                Section(header: Text("Legal")) {
+                    Button("Terms & Conditions") {
+                        showTerms = true
+                    }
+                }
+
                 Section(
                     header: Text("ODO / Date / SPV Cache"),
                     footer: Text("This only clears the locally saved odometer, date, and Private Value data.")
@@ -136,6 +192,9 @@ struct HPDSettingsView: View {
                         Text("Invalid URL")
                     }
                 }
+            }
+            .sheet(isPresented: $showTerms) {
+                LegalTermsView()
             }
             .onAppear {
                 // Pre-fill manual URL field with the default so the text field isn't blank

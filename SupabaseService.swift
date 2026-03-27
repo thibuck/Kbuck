@@ -110,9 +110,6 @@ struct FavoriteRow: Codable {
     /// Fetches all rows for the current user from `favorites_kbuck` and replaces local state.
     /// Clears state BEFORE the async call so a fetch failure never leaves ghost data on screen.
     func syncFetchFavoritesFromSupabase() async {
-        // Wipe memory + UserDefaults first — even a network failure leaves a clean slate.
-        clearAllLocalState()
-
         guard let uid = currentUserID else {
             print("🔴 SUPABASE: syncFetchFavoritesFromSupabase — no authenticated user, aborting")
             return
@@ -130,22 +127,18 @@ struct FavoriteRow: Codable {
             print("🟢 SUPABASE SUCCESS: syncFetchFavoritesFromSupabase — received \(rows.count) row(s)")
 
             var newFavs: Set<String> = []
-            var newOdo: [String: OdoInfo] = [:]   // start empty — never carry stale data forward
-
             for row in rows {
                 let vin = normalizeVIN(row.vin)
                 guard !vin.isEmpty else { continue }
                 newFavs.insert(vin)
-                let pvFormatted = row.private_value.map { formatPrivateValueForDisplay($0) }
-                newOdo[vin] = OdoInfo(
-                    odometer: row.odometer ?? "",
-                    testDate: (row.test_date ?? "").dateOnly,
-                    privateValue: pvFormatted
-                )
-            }
 
+                var info = odoByVIN[vin] ?? OdoInfo(odometer: "", testDate: "", privateValue: nil)
+                if let odo = row.odometer, !odo.isEmpty { info.odometer = odo }
+                if let td = row.test_date, !td.isEmpty { info.testDate = td.dateOnly }
+                if let pv = row.private_value, !pv.isEmpty { info.privateValue = formatPrivateValueForDisplay(pv) }
+                odoByVIN[vin] = info
+            }
             favorites = newFavs
-            odoByVIN  = newOdo
             persistFavorites()
             persistOdo()
 
@@ -214,7 +207,7 @@ struct FavoriteRow: Codable {
                 let row = FavoriteRow(user_id: uid, vin: clean)
                 try await supabase
                     .from("favorites_kbuck")
-                    .upsert(row, onConflict: "user_id,vin")
+                    .upsert(row)
                     .execute()
                 print("🟢 SUPABASE SUCCESS: syncAddFavorite — VIN=\(clean) upserted")
                 await syncFetchFavoritesFromSupabase()
@@ -247,6 +240,20 @@ struct FavoriteRow: Codable {
         }
     }
 
+    func syncLogLegalAgreement(vin: String) {
+        let uid = currentUserID
+        let cleanVIN = normalizeVIN(vin)
+        Task(priority: .background) {
+            do {
+                let log = LegalAgreementLog(user_id: uid, vin: cleanVIN, action: "ACCEPTED_FETCH_TERMS")
+                try await supabase.from("legal_agreements_log").insert(log).execute()
+                print("🟢 SUPABASE SUCCESS: Legal agreement logged for VIN=\(cleanVIN)")
+            } catch {
+                print("🔴 SUPABASE ERROR logging agreement: \(error.localizedDescription)")
+            }
+        }
+    }
+
     // MARK: - Supabase Sync: Upsert full detail
 
     /// Upserts a full-detail row including odometer and private value from the local cache.
@@ -269,7 +276,7 @@ struct FavoriteRow: Codable {
             do {
                 try await supabase
                     .from("favorites_kbuck")
-                    .upsert(row, onConflict: "user_id,vin")
+                    .upsert(row)
                     .execute()
                 print("🟢 SUPABASE SUCCESS: syncUpsertFavorite — VIN=\(vin) upserted with full detail")
                 await syncFetchFavoritesFromSupabase()
