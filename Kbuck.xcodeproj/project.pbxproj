@@ -6,6 +6,19 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		BCD18D682F746F5B0018C5E6 /* Auth in Frameworks */ = {isa = PBXBuildFile; productRef = BCD18D672F746F5B0018C5E6 /* Auth */; };
+		BCD18D6A2F746F5B0018C5E6 /* Functions in Frameworks */ = {isa = PBXBuildFile; productRef = BCD18D692F746F5B0018C5E6 /* Functions */; };
+		BCD18D6C2F746F5B0018C5E6 /* PostgREST in Frameworks */ = {isa = PBXBuildFile; productRef = BCD18D6B2F746F5B0018C5E6 /* PostgREST */; };
+		BCD18D6E2F746F5B0018C5E6 /* Realtime in Frameworks */ = {isa = PBXBuildFile; productRef = BCD18D6D2F746F5B0018C5E6 /* Realtime */; };
+		BCD18D702F746F5B0018C5E6 /* Storage in Frameworks */ = {isa = PBXBuildFile; productRef = BCD18D6F2F746F5B0018C5E6 /* Storage */; };
+		BCD18D722F746F5B0018C5E6 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = BCD18D712F746F5B0018C5E6 /* Supabase */; };
+		BCD18D742F7478820018C5E6 /* HPDModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCD18D732F7478820018C5E6 /* HPDModels.swift */; };
+		BCD18D762F7478CD0018C5E6 /* HPDParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCD18D752F7478CD0018C5E6 /* HPDParser.swift */; };
+		BCD18D782F7479020018C5E6 /* SupabaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCD18D772F7479020018C5E6 /* SupabaseService.swift */; };
+		BCD18D7A2F747AE60018C5E6 /* HPDSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCD18D792F747AE60018C5E6 /* HPDSettingsView.swift */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		BC9A49492EA2CCAF00011997 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,11 +40,28 @@
 		BC9A493B2EA2CCAE00011997 /* Kbuck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Kbuck.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BC9A49482EA2CCAF00011997 /* KbuckTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KbuckTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BC9A49522EA2CCAF00011997 /* KbuckUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KbuckUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		BCD18D732F7478820018C5E6 /* HPDModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HPDModels.swift; sourceTree = "<group>"; };
+		BCD18D752F7478CD0018C5E6 /* HPDParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HPDParser.swift; sourceTree = "<group>"; };
+		BCD18D772F7479020018C5E6 /* SupabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseService.swift; sourceTree = "<group>"; };
+		BCD18D792F747AE60018C5E6 /* HPDSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HPDSettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		BC6DF7432EB9159F00B789DB /* Exceptions for "Kbuck" folder in "Kbuck" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = BC9A493A2EA2CCAE00011997 /* Kbuck */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		BC9A493D2EA2CCAE00011997 /* Kbuck */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				BC6DF7432EB9159F00B789DB /* Exceptions for "Kbuck" folder in "Kbuck" target */,
+			);
 			path = Kbuck;
 			sourceTree = "<group>";
 		};
@@ -52,6 +82,12 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BCD18D6C2F746F5B0018C5E6 /* PostgREST in Frameworks */,
+				BCD18D6A2F746F5B0018C5E6 /* Functions in Frameworks */,
+				BCD18D722F746F5B0018C5E6 /* Supabase in Frameworks */,
+				BCD18D682F746F5B0018C5E6 /* Auth in Frameworks */,
+				BCD18D702F746F5B0018C5E6 /* Storage in Frameworks */,
+				BCD18D6E2F746F5B0018C5E6 /* Realtime in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -79,6 +115,10 @@
 				BC9A494B2EA2CCAF00011997 /* KbuckTests */,
 				BC9A49552EA2CCAF00011997 /* KbuckUITests */,
 				BC9A493C2EA2CCAE00011997 /* Products */,
+				BCD18D732F7478820018C5E6 /* HPDModels.swift */,
+				BCD18D752F7478CD0018C5E6 /* HPDParser.swift */,
+				BCD18D772F7479020018C5E6 /* SupabaseService.swift */,
+				BCD18D792F747AE60018C5E6 /* HPDSettingsView.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -112,6 +152,12 @@
 			);
 			name = Kbuck;
 			packageProductDependencies = (
+				BCD18D672F746F5B0018C5E6 /* Auth */,
+				BCD18D692F746F5B0018C5E6 /* Functions */,
+				BCD18D6B2F746F5B0018C5E6 /* PostgREST */,
+				BCD18D6D2F746F5B0018C5E6 /* Realtime */,
+				BCD18D6F2F746F5B0018C5E6 /* Storage */,
+				BCD18D712F746F5B0018C5E6 /* Supabase */,
 			);
 			productName = Kbuck;
 			productReference = BC9A493B2EA2CCAE00011997 /* Kbuck.app */;
@@ -171,7 +217,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2610;
-				LastUpgradeCheck = 2610;
+				LastUpgradeCheck = 2640;
 				TargetAttributes = {
 					BC9A493A2EA2CCAE00011997 = {
 						CreatedOnToolsVersion = 26.1;
@@ -195,6 +241,9 @@
 			);
 			mainGroup = BC9A49322EA2CCAE00011997;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				BCD18D662F746F5B0018C5E6 /* XCRemoteSwiftPackageReference "supabase-swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BC9A493C2EA2CCAE00011997 /* Products */;
 			projectDirPath = "";
@@ -236,6 +285,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BCD18D782F7479020018C5E6 /* SupabaseService.swift in Sources */,
+				BCD18D762F7478CD0018C5E6 /* HPDParser.swift in Sources */,
+				BCD18D742F7478820018C5E6 /* HPDModels.swift in Sources */,
+				BCD18D7A2F747AE60018C5E6 /* HPDSettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -303,6 +356,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = NZ5S9522PW;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -326,6 +380,7 @@
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -365,6 +420,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = NZ5S9522PW;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -381,6 +437,7 @@
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 			};
 			name = Release;
@@ -390,14 +447,30 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Kbuck/Kbuck.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = NZ5S9522PW;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
+				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = YES;
+				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
+				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Kbuck/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Kbuck;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
+				INFOPLIST_KEY_NSCalendarsUsageDescription = NSCalendarsUsageDescription;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -408,7 +481,7 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
@@ -434,14 +507,30 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Kbuck/Kbuck.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = NZ5S9522PW;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
+				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = YES;
+				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
+				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Kbuck/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Kbuck;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
+				INFOPLIST_KEY_NSCalendarsUsageDescription = NSCalendarsUsageDescription;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -452,7 +541,7 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
@@ -479,6 +568,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = NZ5S9522PW;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
@@ -505,6 +595,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = NZ5S9522PW;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
@@ -530,6 +621,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = NZ5S9522PW;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
@@ -555,6 +647,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = NZ5S9522PW;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
@@ -615,6 +708,50 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		BCD18D662F746F5B0018C5E6 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase-community/supabase-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.5.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		BCD18D672F746F5B0018C5E6 /* Auth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BCD18D662F746F5B0018C5E6 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Auth;
+		};
+		BCD18D692F746F5B0018C5E6 /* Functions */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BCD18D662F746F5B0018C5E6 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Functions;
+		};
+		BCD18D6B2F746F5B0018C5E6 /* PostgREST */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BCD18D662F746F5B0018C5E6 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = PostgREST;
+		};
+		BCD18D6D2F746F5B0018C5E6 /* Realtime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BCD18D662F746F5B0018C5E6 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Realtime;
+		};
+		BCD18D6F2F746F5B0018C5E6 /* Storage */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BCD18D662F746F5B0018C5E6 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Storage;
+		};
+		BCD18D712F746F5B0018C5E6 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BCD18D662F746F5B0018C5E6 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = BC9A49332EA2CCAE00011997 /* Project object */;
 }
