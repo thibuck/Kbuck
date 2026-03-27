@@ -13,16 +13,39 @@ extension Bundle {
     var versionLabel: String { "v\(appVersion) (\(buildNumber))" }
 }
 
-extension View {
-    func hideKeyboardOnTap() -> some View {
-        onTapGesture {
+// UIKit-level tap recognizer with cancelsTouchesInView = false.
+// This dismisses the keyboard without ever consuming or cancelling the
+// original touch, so buttons and NavigationLinks respond on the first tap.
+private struct KeyboardDismissBackground: UIViewRepresentable {
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        let tap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.dismiss)
+        )
+        tap.cancelsTouchesInView = false
+        view.addGestureRecognizer(tap)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
+
+    final class Coordinator: NSObject {
+        @objc func dismiss() {
             UIApplication.shared.sendAction(
                 #selector(UIResponder.resignFirstResponder),
-                to: nil,
-                from: nil,
-                for: nil
+                to: nil, from: nil, for: nil
             )
         }
+    }
+}
+
+extension View {
+    func hideKeyboardOnTap() -> some View {
+        background(KeyboardDismissBackground())
     }
 }
 

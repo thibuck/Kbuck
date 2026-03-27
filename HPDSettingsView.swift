@@ -8,59 +8,37 @@ struct AdminUserStatus: Codable, Identifiable {
     let is_banned: Bool?
     let scrape_count_today: Int?
     let last_scrape_reset: String?
-    
+
     var displayTime: String {
         guard let raw = last_active else { return "Never" }
-        
-        // Normalize PostgREST timestamptz (replace space with T)
         let cleanStr = raw.replacingOccurrences(of: " ", with: "T")
         var date: Date? = nil
-        
-        // 1. Try strict ISO8601 (often fails on 6-digit microseconds)
         let isoFormatter = ISO8601DateFormatter()
         isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         date = isoFormatter.date(from: cleanStr)
-        
         if date == nil {
             isoFormatter.formatOptions = [.withInternetDateTime]
             date = isoFormatter.date(from: cleanStr)
         }
-        
-        // 2. Fallback: Robust POSIX formatter for 6-digit microseconds (Supabase default)
         if date == nil {
             let df = DateFormatter()
             df.locale = Locale(identifier: "en_US_POSIX")
-            df.timeZone = TimeZone(secondsFromGMT: 0) // Force UTC interpretation
-            
-            let formats = [
-                "yyyy-MM-dd'T'HH:mm:ss.SSSSSSZZZZZ",
-                "yyyy-MM-dd'T'HH:mm:ss.SSSZZZZZ",
-                "yyyy-MM-dd'T'HH:mm:ssZZZZZ"
-            ]
-            
-            for format in formats {
+            df.timeZone = TimeZone(secondsFromGMT: 0)
+            for format in ["yyyy-MM-dd'T'HH:mm:ss.SSSSSSZZZZZ", "yyyy-MM-dd'T'HH:mm:ss.SSSZZZZZ", "yyyy-MM-dd'T'HH:mm:ssZZZZZ"] {
                 df.dateFormat = format
-                if let parsed = df.date(from: cleanStr) {
-                    date = parsed
-                    break
-                }
+                if let parsed = df.date(from: cleanStr) { date = parsed; break }
             }
         }
-        
         guard let validDate = date else { return "Format Error" }
-        
         let diff = Date().timeIntervalSince(validDate)
-        
-        // If difference is negative (clock skew) or under 5 minutes, user is Online
-        if diff >= -60 && diff < 300 { 
-            return "🟢 Online" 
-        }
-        
+        if diff >= -60 && diff < 300 { return "🟢 Online" }
         let relFormatter = RelativeDateTimeFormatter()
         relFormatter.unitsStyle = .abbreviated
         return relFormatter.localizedString(for: validDate, relativeTo: Date())
     }
 }
+
+// MARK: - Legal Terms
 
 struct LegalTermsView: View {
     @Environment(\.dismiss) private var dismiss
@@ -97,9 +75,7 @@ struct LegalTermsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
+                    Button("Done") { dismiss() }
                 }
             }
         }
@@ -175,13 +151,106 @@ struct AdminUserDetailSheet: View {
     }
 }
 
+// MARK: - User Activity Detail View (super_admin only)
+
+struct UserActivityDetailView: View {
+    @EnvironmentObject private var supabaseService: SupabaseService
+    @State private var adminUsers: [AdminUserStatus] = []
+    @State private var isLoading: Bool = false
+    @State private var selectedUser: AdminUserStatus? = nil
+
+    var body: some View {
+        List {
+            if isLoading && adminUsers.isEmpty {
+                Section {
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                        Spacer()
+                    }
+                }
+            } else {
+                Section {
+                    ForEach(adminUsers) { user in
+                        Button {
+                            selectedUser = user
+                        } label: {
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(user.email ?? "Unknown")
+                                        .font(.subheadline)
+                                        .strikethrough(user.is_banned == true, color: .red)
+                                        .foregroundStyle(.primary)
+                                    let count = user.scrape_count_today ?? 0
+                                    Text("\(count) / 50 extractions today")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if user.is_banned == true {
+                                    Text("BANNED")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(.red)
+                                } else {
+                                    VStack(alignment: .trailing, spacing: 4) {
+                                        let count = user.scrape_count_today ?? 0
+                                        ProgressView(value: Double(count), total: 50.0)
+                                            .progressViewStyle(.linear)
+                                            .tint(count >= 45 ? .red : count >= 30 ? .yellow : .green)
+                                            .frame(width: 64)
+                                        Text(user.displayTime)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } footer: {
+                    if !adminUsers.isEmpty {
+                        Text("\(adminUsers.count) registered user(s)")
+                    }
+                }
+            }
+        }
+        .navigationTitle("User Activity")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Task { await fetch() }
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(isLoading)
+            }
+        }
+        .sheet(item: $selectedUser) { user in
+            AdminUserDetailSheet(user: user, supabaseService: supabaseService) {
+                Task { await fetch() }
+            }
+        }
+        .task { await fetch() }
+    }
+
+    private func fetch() async {
+        isLoading = true
+        do {
+            let users: [AdminUserStatus] = try await supabase.rpc("get_all_users_status").execute().value
+            await MainActor.run { adminUsers = users }
+        } catch {
+            print("🔴 RPC Error fetching users: \(error)")
+        }
+        await MainActor.run { isLoading = false }
+    }
+}
+
+// MARK: - Settings View
+
 struct HPDSettingsView: View {
     @EnvironmentObject private var supabaseService: SupabaseService
 
-    // Role written by ContentView after fetching from the profiles table.
-    @AppStorage("userRole") private var userRole: String = "user"
-
-    // Shared AppStorage keys read/written by HPDView as well
+    @AppStorage("userRole")            private var userRole: String = "user"
     @AppStorage("hpdManualURLEnabled") private var manualURLModeEnabled: Bool = false
     @AppStorage("hpdManualURLInput")   private var hpdManualURLInput: String = ""
     @AppStorage("hpdHadLastError")     private var hpdHadLastError: Bool = false
@@ -189,22 +258,18 @@ struct HPDSettingsView: View {
     @AppStorage("hpdCachedURL")        private var hpdCachedURL: String = ""
     @AppStorage("openWebInSafari")     private var openWebInSafari: Bool = false
 
-    // Local state
-    @State private var showClearOdoAlert = false
-    @State private var showSignOutAlert  = false
-    @State private var showHPDWeb: Bool  = false
-    @State private var showTerms: Bool   = false
-    @State private var adminUsers: [AdminUserStatus] = []
-    @State private var isLoadingUsers: Bool = false
+    @State private var showClearOdoAlert  = false
+    @State private var showSignOutAlert   = false
+    @State private var showHPDWeb: Bool   = false
+    @State private var showTerms: Bool    = false
     @State private var isLoadingProfile: Bool = false
-    @State private var selectedAdminUser: AdminUserStatus? = nil
     @State private var isDataSourceExpanded: Bool = false
 
     private let defaultURLString = "https://www.houstontx.gov/police/auto_dealers_detail/Vehicles_Scheduled_For_Auction.htm"
 
     private var userEmail: String? { supabase.auth.currentUser?.email }
 
-    // MARK: - Usage Dashboard Computed Properties
+    // MARK: - Usage Dashboard
 
     private var currentCount: Int { supabaseService.currentProfile?.scrape_count_today ?? 0 }
 
@@ -245,20 +310,12 @@ struct HPDSettingsView: View {
         return "Resets in \(hours) hr \(mins) min"
     }
 
-    private func fetchAdminUsers() async {
-        isLoadingUsers = true
-        do {
-            let users: [AdminUserStatus] = try await supabase.rpc("get_all_users_status").execute().value
-            await MainActor.run { self.adminUsers = users }
-        } catch {
-            print("🔴 RPC Error fetching users: \(error)")
-        }
-        await MainActor.run { isLoadingUsers = false }
-    }
+    // MARK: - Body
 
     var body: some View {
         NavigationStack {
             Form {
+                // Welcome header
                 if let email = userEmail, !email.isEmpty {
                     Section {
                         Text("Welcome, \(email)")
@@ -267,45 +324,21 @@ struct HPDSettingsView: View {
                     }
                 }
 
+                // Super admin: single NavigationLink → UserActivityDetailView
                 if userRole == "super_admin" {
-                    Section(header: Text("User Activity")) {
-                        if isLoadingUsers && adminUsers.isEmpty {
-                            ProgressView()
-                        } else {
-                            ForEach(adminUsers) { user in
-                                Button {
-                                    selectedAdminUser = user
-                                } label: {
-                                    HStack {
-                                        Text(user.email ?? "Unknown")
-                                            .font(.subheadline)
-                                            .strikethrough(user.is_banned == true, color: .red)
-                                            .foregroundStyle(.primary)
-                                        Spacer()
-                                        if user.is_banned == true {
-                                            Text("BANNED").font(.caption.bold()).foregroundStyle(.red)
-                                        } else {
-                                            Text(user.displayTime)
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Button {
-                            Task {
-                                await fetchAdminUsers()
-                                await supabaseService.fetchCurrentProfile()
-                            }
+                    Section(header: Text("Consumption")) {
+                        NavigationLink {
+                            UserActivityDetailView()
                         } label: {
-                            Label("Refresh Users", systemImage: "arrow.clockwise")
+                            Label("User Activity", systemImage: "chart.bar.fill")
+                                .foregroundStyle(.primary)
                         }
                     }
                 }
 
+                // Regular user: Daily Fetch Quota inline
                 if userRole != "super_admin" {
-                    Section(header: Text("DAILY FETCH QUOTA")) {
+                    Section(header: Text("Daily Fetch Quota")) {
                         if isLoadingProfile {
                             ProgressView()
                         } else {
@@ -348,6 +381,7 @@ struct HPDSettingsView: View {
                     .disabled(isLoadingProfile)
                 }
 
+                // Super admin: Data Source collapsed DisclosureGroup
                 if userRole == "super_admin" {
                     Section {
                         DisclosureGroup("Data Source Information", isExpanded: $isDataSourceExpanded) {
@@ -402,16 +436,20 @@ struct HPDSettingsView: View {
                     }
                 }
 
+                // Browser Preferences
                 Section(header: Text("Browser Preferences")) {
                     Toggle("Force External Safari for Reports", isOn: $openWebInSafari)
                 }
 
+                // Legal
                 Section(header: Text("Legal")) {
                     Button("Terms & Conditions") {
                         showTerms = true
                     }
+                    .foregroundStyle(.primary)
                 }
 
+                // Cache
                 Section(
                     header: Text("ODO / Date / SPV Cache"),
                     footer: Text("This only clears the locally saved odometer, date, and Private Value data.")
@@ -431,6 +469,7 @@ struct HPDSettingsView: View {
                     Text("This will permanently delete saved odometers, dates, and SPV values. This action cannot be undone.")
                 }
 
+                // Sign Out
                 Section {
                     Button(role: .destructive) {
                         showSignOutAlert = true
@@ -465,25 +504,16 @@ struct HPDSettingsView: View {
             .sheet(isPresented: $showTerms) {
                 LegalTermsView()
             }
-            .sheet(item: $selectedAdminUser) { user in
-                AdminUserDetailSheet(user: user, supabaseService: supabaseService) {
-                    Task { await fetchAdminUsers() }
-                }
-            }
             .onAppear {
-                // Pre-fill manual URL field with the default so the text field isn't blank
                 if hpdManualURLInput.isEmpty {
                     hpdManualURLInput = defaultURLString
                 }
             }
             .task {
-                if userRole == "super_admin" {
-                    await fetchAdminUsers()
-                } else {
-                    isLoadingProfile = true
-                    await supabaseService.fetchCurrentProfile()
-                    isLoadingProfile = false
-                }
+                guard userRole != "super_admin" else { return }
+                isLoadingProfile = true
+                await supabaseService.fetchCurrentProfile()
+                isLoadingProfile = false
             }
         }
     }

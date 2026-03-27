@@ -633,8 +633,9 @@ private struct HPDFilterSheet: View {
 
     @ViewBuilder
     private func locationRow(_ addr: String) -> some View {
+        let isSelected = selectedFilters.contains(addr)
         Button {
-            if selectedFilters.contains(addr) {
+            if isSelected {
                 selectedFilters.remove(addr)
             } else {
                 selectedFilters.insert(addr)
@@ -642,12 +643,17 @@ private struct HPDFilterSheet: View {
         } label: {
             HStack {
                 Text(addr)
+                    .font(.subheadline)
                     .foregroundStyle(.primary)
                 Spacer()
-                if selectedFilters.contains(addr) {
+                if isSelected {
                     Image(systemName: "checkmark")
                         .foregroundStyle(Color.accentColor)
                         .fontWeight(.semibold)
+                } else {
+                    Image(systemName: "chevron.right")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
                 }
             }
         }
@@ -2888,7 +2894,7 @@ struct HPDView: View {
                     }()
 
                     Text(displayAddr)
-                        .font(.caption)
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
