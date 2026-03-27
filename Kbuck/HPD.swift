@@ -3040,7 +3040,7 @@ struct HPDView: View {
                     self.extractionState = .idle
                     self.pendingExtractionEntry = nil
                     if state == .fetchingOdometer {
-                        self.extractionErrorMessage = "Odometer Fetch Failed: The TX state inspection server did not respond within 8 seconds, or no recent mileage records exist for this VIN."
+                        self.extractionErrorMessage = "Odometer Fetch Failed: No recent mileage information was found from the last inspection, or the state server is currently unavailable."
                     } else if state == .fetchingPrice {
                         self.extractionErrorMessage = "Value Fetch Failed: The DMV valuation server timed out. The vehicle might not have a calculable private party value at this time."
                     } else {
