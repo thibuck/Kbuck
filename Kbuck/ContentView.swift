@@ -13,6 +13,19 @@ extension Bundle {
     var versionLabel: String { "v\(appVersion) (\(buildNumber))" }
 }
 
+extension View {
+    func hideKeyboardOnTap() -> some View {
+        onTapGesture {
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder),
+                to: nil,
+                from: nil,
+                for: nil
+            )
+        }
+    }
+}
+
 // MARK: - Auth Router
 
 struct ContentView: View {
@@ -64,6 +77,7 @@ struct ContentView: View {
                 }
             }
         }
+        .hideKeyboardOnTap()
     }
 
     // MARK: - Role fetch

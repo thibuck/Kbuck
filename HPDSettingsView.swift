@@ -198,6 +198,7 @@ struct HPDSettingsView: View {
     @State private var isLoadingUsers: Bool = false
     @State private var isLoadingProfile: Bool = false
     @State private var selectedAdminUser: AdminUserStatus? = nil
+    @State private var isDataSourceExpanded: Bool = false
 
     private let defaultURLString = "https://www.houstontx.gov/police/auto_dealers_detail/Vehicles_Scheduled_For_Auction.htm"
 
@@ -266,58 +267,7 @@ struct HPDSettingsView: View {
                     }
                 }
 
-                // Restricted to Super Admin
                 if userRole == "super_admin" {
-                    Section(header: Text("Data Source")) {
-                        LabeledContent("Default URL", value: defaultURLString)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .textSelection(.enabled)
-
-                        Button { refreshTrigger += 1 } label: {
-                            Label("Refresh Now", systemImage: "arrow.clockwise")
-                        }
-
-                        Toggle("Edit URL Manually", isOn: $manualURLModeEnabled)
-                            .tint(.blue)
-
-                        Button { showHPDWeb = true } label: {
-                            Label("Open HPD Web", systemImage: "safari")
-                        }
-                    }
-
-                    if manualURLModeEnabled || hpdHadLastError {
-                        Section(
-                            header: Text("Manual URL"),
-                            footer: Text("Use only if the target page changed. You can revert to the default URL anytime.")
-                        ) {
-                            TextField("https://…", text: $hpdManualURLInput)
-                                .textInputAutocapitalization(.never)
-                                .keyboardType(.URL)
-                                .textContentType(.URL)
-                                .autocorrectionDisabled(true)
-
-                            HStack {
-                                Button {
-                                    refreshTrigger += 1
-                                } label: {
-                                    Label("Fetch", systemImage: "arrow.down.circle")
-                                }
-                                .disabled(hpdManualURLInput.trimmingCharacters(in: .whitespaces).isEmpty)
-
-                                Spacer()
-
-                                Button {
-                                    hpdManualURLInput = defaultURLString
-                                    manualURLModeEnabled = false
-                                    hpdHadLastError = false
-                                } label: {
-                                    Label("Use Default URL", systemImage: "arrow.uturn.backward")
-                                }
-                            }
-                        }
-                    }
-
                     Section(header: Text("User Activity")) {
                         if isLoadingUsers && adminUsers.isEmpty {
                             ProgressView()
@@ -396,6 +346,60 @@ struct HPDSettingsView: View {
                         }
                     }
                     .disabled(isLoadingProfile)
+                }
+
+                if userRole == "super_admin" {
+                    Section {
+                        DisclosureGroup("Data Source Information", isExpanded: $isDataSourceExpanded) {
+                            LabeledContent("Default URL", value: defaultURLString)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+
+                            Button { refreshTrigger += 1 } label: {
+                                Label("Refresh Now", systemImage: "arrow.clockwise")
+                            }
+
+                            Toggle("Edit URL Manually", isOn: $manualURLModeEnabled)
+                                .tint(.blue)
+
+                            Button { showHPDWeb = true } label: {
+                                Label("Open HPD Web", systemImage: "safari")
+                            }
+                        }
+                    }
+
+                    if manualURLModeEnabled || hpdHadLastError {
+                        Section(
+                            header: Text("Manual URL"),
+                            footer: Text("Use only if the target page changed. You can revert to the default URL anytime.")
+                        ) {
+                            TextField("https://…", text: $hpdManualURLInput)
+                                .textInputAutocapitalization(.never)
+                                .keyboardType(.URL)
+                                .textContentType(.URL)
+                                .autocorrectionDisabled(true)
+
+                            HStack {
+                                Button {
+                                    refreshTrigger += 1
+                                } label: {
+                                    Label("Fetch", systemImage: "arrow.down.circle")
+                                }
+                                .disabled(hpdManualURLInput.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                                Spacer()
+
+                                Button {
+                                    hpdManualURLInput = defaultURLString
+                                    manualURLModeEnabled = false
+                                    hpdHadLastError = false
+                                } label: {
+                                    Label("Use Default URL", systemImage: "arrow.uturn.backward")
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Section(header: Text("Browser Preferences")) {

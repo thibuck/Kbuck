@@ -599,38 +599,36 @@ struct MileageWebView: UIViewRepresentable {
     }
 }
 
-// MARK: - Location Filter Sheet (standalone struct for explicit type resolution)
+// MARK: - HPD Filter Sheet
 
-private struct LocationFilterSheet: View {
+private struct HPDFilterSheet: View {
     let addresses: [String]
     @Binding var selectedFilters: Set<String>
     let onDismiss: () -> Void
 
     var body: some View {
         NavigationStack {
-            locationList
-                .navigationTitle("Locations")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") { onDismiss() }
-                    }
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Clear") { selectedFilters = [] }
-                            .foregroundStyle(.red)
-                            .disabled(selectedFilters.isEmpty)
+            List {
+                Section("Locations") {
+                    ForEach(addresses, id: \.self) { addr in
+                        locationRow(addr)
                     }
                 }
+            }
+            .navigationTitle("Locations")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { onDismiss() }
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Clear") { selectedFilters = [] }
+                        .foregroundStyle(.red)
+                        .disabled(selectedFilters.isEmpty)
+                }
+            }
         }
         .presentationDetents([.medium, .large])
-    }
-
-    // Extracted to avoid ForEach overload ambiguity with Binding initializers
-    private var locationList: some View {
-        let items: [String] = addresses
-        return List(items, id: \.self) { (addr: String) in
-            locationRow(addr)
-        }
     }
 
     @ViewBuilder
@@ -1365,6 +1363,10 @@ struct HPDView: View {
     @State private var isUserNavigatingFromHeader: Bool = false
     @State private var showFilter: Bool = false
     @State private var filterOption: FilterOption = .all
+    @State private var selectedYear: Int? = nil
+    @State private var selectedMake: String = "All"
+    @State private var selectedModel: String = "All"
+    @State private var maxPrice: String = ""
 
     @State private var searchText: String = ""
 
@@ -1437,7 +1439,24 @@ struct HPDView: View {
     }
 
     private var showFilterIndicator: Bool {
-        !selectedLocationFilters.isEmpty || filterOption != .all || sortKey != .date || !sortAscending
+        !selectedLocationFilters.isEmpty ||
+        filterOption != .all ||
+        sortKey != .date ||
+        !sortAscending ||
+        selectedYear != nil ||
+        selectedMake != "All" ||
+        selectedModel != "All" ||
+        !maxPrice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var sortOption: SortKey {
+        get { sortKey }
+        nonmutating set { sortKey = newValue }
+    }
+
+    private var showPricedOnly: Bool {
+        get { filterOption == .priced }
+        nonmutating set { filterOption = newValue ? .priced : .all }
     }
 
     private func decodeCachedEntries(_ data: Data) -> [HPDEntry] {
@@ -1962,19 +1981,51 @@ struct HPDView: View {
 
     private var uniqueAddresses: [String] {
         // Group by street number key — keeps the first full readable address per number.
+        // Passive guard blocks exact garbage artifacts (e.g. "Llc", "Inc", very short strings).
         var seen: [String: String] = [:]
         for entry in entries {
             let raw = entry.lotAddress.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !raw.isEmpty else { continue }
+            guard raw.count >= 5,
+                  !raw.lowercased().elementsEqual("llc"),
+                  !raw.lowercased().elementsEqual("inc") else { continue }
             let key = raw.streetNumberKey
             if seen[key] == nil { seen[key] = raw }
         }
         return Array(seen.values).sorted()
     }
 
+    private var uniqueMakes: [String] {
+        let makes = entries
+            .filter { !isDateInPast($0.dateScheduled) }
+            .map { $0.make.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return Array(Set(makes)).sorted()
+    }
+
+    private var modelOptionsForSelectedMake: [String] {
+        let base = entries.filter { !isDateInPast($0.dateScheduled) }
+        let filtered: [HPDEntry]
+        if selectedMake == "All" {
+            filtered = base
+        } else {
+            filtered = base.filter { $0.make.localizedCaseInsensitiveCompare(selectedMake) == .orderedSame }
+        }
+        let models = filtered
+            .map { $0.model.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return Array(Set(models)).sorted()
+    }
+
+    private var uniqueYears: [Int] {
+        let years = entries
+            .filter { !isDateInPast($0.dateScheduled) }
+            .compactMap { parseYearInt($0.year) }
+        return Array(Set(years)).sorted()
+    }
+
     // Single reactive token — changes whenever any filter or sort option changes.
     private var activeFilterHash: String {
-        "\(filterOption.rawValue)|\(sortKey.rawValue)|\(selectedLocationFilters.sorted().joined(separator: ","))|\(sortAscending)"
+        "\(filterOption.rawValue)|\(sortKey.rawValue)|\(selectedLocationFilters.sorted().joined(separator: ","))|\(sortAscending)|\(selectedYear.map(String.init) ?? "All")|\(selectedMake)|\(selectedModel)|\(maxPrice)"
     }
 
     @ViewBuilder private func sectionRows(for items: [HPDEntry]) -> some View {
@@ -2105,32 +2156,46 @@ struct HPDView: View {
 
     @ViewBuilder private var filterSortMenu: some View {
         Menu {
-            Picker("Sort", selection: $sortKey) {
-                Label("Date", systemImage: "calendar").tag(SortKey.date)
-                Label("Year", systemImage: "number").tag(SortKey.year)
-                Label("Make", systemImage: "car").tag(SortKey.make)
-                Label("Model", systemImage: "tag").tag(SortKey.model)
+            Button { sortOption = .date } label: {
+                Label("Date", systemImage: sortOption == .date ? "checkmark" : "calendar")
+            }
+            Button { sortOption = .year } label: {
+                Label("Year", systemImage: sortOption == .year ? "checkmark" : "number")
+            }
+            Button { sortOption = .make } label: {
+                Label("Make", systemImage: sortOption == .make ? "checkmark" : "car")
+            }
+            Button { sortOption = .model } label: {
+                Label("Model", systemImage: sortOption == .model ? "checkmark" : "tag")
             }
             Divider()
-            Picker("Order", selection: $sortAscending) {
-                Label("Soonest First", systemImage: "arrow.up").tag(true)
-                Label("Latest First", systemImage: "arrow.down").tag(false)
+            Button { sortAscending = true } label: {
+                Label("Soonest First", systemImage: sortAscending ? "checkmark" : "arrow.up")
             }
-            if !favoritesOnly {
-                Divider()
-                Picker("Filter", selection: $filterOption) {
-                    Label("All Vehicles", systemImage: "list.bullet").tag(FilterOption.all)
-                    Label("Priced", systemImage: "dollarsign.circle").tag(FilterOption.priced)
-                }
+            Button { sortAscending = false } label: {
+                Label("Latest First", systemImage: !sortAscending ? "checkmark" : "arrow.down")
+            }
+            Divider()
+            Button { showPricedOnly = false } label: {
+                Label("All Vehicles", systemImage: !showPricedOnly ? "checkmark" : "list.bullet")
+            }
+            Button { showPricedOnly = true } label: {
+                Label("Priced", systemImage: showPricedOnly ? "checkmark" : "dollarsign.circle")
             }
             Divider()
             Button {
-                showLocationFilterSheet = true
+                isUserNavigatingFromHeader = true
+                showFilter = true
             } label: {
                 Label("Locations", systemImage: "mappin.and.ellipse")
             }
         } label: {
-            Image(systemName: "line.3.horizontal.decrease.circle")
+            Image(systemName: showFilterIndicator ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                .font(.title3)
+                .foregroundStyle(showFilterIndicator ? Color.accentColor : Color.secondary)
+                .padding(10)
+                .background(Color(.systemGray6))
+                .clipShape(Circle())
         }
     }
 
@@ -2156,17 +2221,7 @@ struct HPDView: View {
                         text: $searchText,
                         placeholder: favoritesOnly ? "Search in favorites..." : "Search VIN, Lot, etc."
                     )
-                    Button {
-                        isUserNavigatingFromHeader = true
-                        showFilter = true
-                    } label: {
-                        Image(systemName: showFilterIndicator ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-                            .font(.title3)
-                            .foregroundStyle(showFilterIndicator ? Color.accentColor : Color.secondary)
-                            .padding(10)
-                            .background(Color(.systemGray6))
-                            .clipShape(Circle())
-                    }
+                    filterSortMenu
                 }
                 .padding(.horizontal, 16)
 
@@ -2203,7 +2258,7 @@ struct HPDView: View {
             await supabaseService.syncFetchFavoritesFromSupabase()
         }
         .sheet(isPresented: $showFilter) {
-            LocationFilterSheet(
+            HPDFilterSheet(
                 addresses: uniqueAddresses,
                 selectedFilters: Binding(
                     get: { selectedLocationFilters },
@@ -2535,6 +2590,8 @@ struct HPDView: View {
     }
 
     private func filteredEntries() -> [HPDEntry] {
+        let selectedSortOption = sortOption
+        let pricedOnly = showPricedOnly
         // Favorites-only tab: early exit — bypass all filters, respect sort only
         if favoritesOnly {
             let df = DateFormatter()
@@ -2545,7 +2602,7 @@ struct HPDView: View {
                 .filter { supabaseService.favorites.contains(normalizeVIN($0.vin)) }
                 .filter { !isCardEmpty($0) }
                 .sorted { a, b in
-                    switch sortKey {
+                    switch selectedSortOption {
                     case .date:
                         let da = df.date(from: a.dateScheduled)
                         let db = df.date(from: b.dateScheduled)
@@ -2596,26 +2653,45 @@ struct HPDView: View {
             }
         }
 
-        // b) Location filter — empty set = all locations; match by street-number key to tolerate suffix variants
+        // b) Make / Model / Year / Price filters
+        let selectedMaxPrice = parsePrice(maxPrice)
+        let afterFieldFilters = afterSearch.filter { entry in
+            if selectedMake != "All",
+               entry.make.localizedCaseInsensitiveCompare(selectedMake) != .orderedSame {
+                return false
+            }
+            if selectedModel != "All",
+               entry.model.localizedCaseInsensitiveCompare(selectedModel) != .orderedSame {
+                return false
+            }
+            if let selectedYear,
+               parseYearInt(entry.year) != selectedYear {
+                return false
+            }
+            if let selectedMaxPrice {
+                guard let price = priceValue(for: entry.vin) else { return false }
+                if price > selectedMaxPrice { return false }
+            }
+            return true
+        }
+
+        // c) Location filter — empty set = all locations; match by street-number key to tolerate suffix variants
         let afterAddress: [HPDEntry]
         let locationFilters = selectedLocationFilters
         if locationFilters.isEmpty {
-            afterAddress = afterSearch
+            afterAddress = afterFieldFilters
         } else {
-            afterAddress = afterSearch.filter { entry in
+            afterAddress = afterFieldFilters.filter { entry in
                 locationFilters.contains(where: { $0.streetNumberKey == entry.lotAddress.streetNumberKey })
             }
         }
 
         // d) Toolbar mode filter
         let afterFilter: [HPDEntry]
-        switch filterOption {
-        case .all:
-            afterFilter = afterAddress
-        case .favorites:
-            afterFilter = afterAddress.filter { supabaseService.favorites.contains(normalizeVIN($0.vin)) }
-        case .priced:
+        if pricedOnly {
             afterFilter = afterAddress.filter { supabaseService.odoByVIN[normalizeVIN($0.vin)]?.privateValue != nil }
+        } else {
+            afterFilter = afterAddress
         }
 
         // Drop visually empty cards then sort by selected sortKey, direction driven by sortAscending
@@ -2626,7 +2702,7 @@ struct HPDView: View {
         let asc = sortAscending
         return clean.sorted { a, b in
             // Returns the "natural ascending" result; we flip if asc == false where applicable.
-            switch sortKey {
+            switch selectedSortOption {
             case .date:
                 let da = df.date(from: a.dateScheduled)
                 let db = df.date(from: b.dateScheduled)
@@ -2797,8 +2873,19 @@ struct HPDView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.82)
 
-                    let addr = sanitizedAddressForMaps(e.lotAddress)
-                    let displayAddr = addr.isEmpty ? (e.lotAddress.isEmpty ? e.lotName : e.lotAddress) : addr
+                    let rawAddress = e.lotAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let rawName = e.lotName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let isValidAddress = rawAddress.count > 5
+                        && !rawAddress.lowercased().elementsEqual("llc")
+                        && !rawAddress.lowercased().elementsEqual("inc")
+                    let displayAddr: String = {
+                        if isValidAddress {
+                            let mapped = sanitizedAddressForMaps(rawAddress)
+                            return mapped.isEmpty ? rawAddress : mapped
+                        } else {
+                            return rawName.count > 3 ? rawName : "Location Unavailable"
+                        }
+                    }()
 
                     Text(displayAddr)
                         .font(.caption)
@@ -3074,6 +3161,7 @@ struct HPDView: View {
             for attempt in 1...2 { // 1 reintento
                 do {
                     var request = URLRequest(url: url)
+                    request.cachePolicy = .reloadIgnoringLocalCacheData
                     request.timeoutInterval = 60 // Aumentar timeout
                     request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
                     request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
