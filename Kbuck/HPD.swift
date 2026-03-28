@@ -1334,8 +1334,14 @@ private extension String {
 }
 
 struct HPDView: View {
-    var favoritesOnly: Bool = false
+    var favoritesOnly: Bool
+    @Binding var externalLocationFilter: String?
     @Environment(\.scenePhase) private var scenePhase
+
+    init(favoritesOnly: Bool = false, externalLocationFilter: Binding<String?> = .constant(nil)) {
+        self.favoritesOnly = favoritesOnly
+        self._externalLocationFilter = externalLocationFilter
+    }
 
     enum ExtractionState: Equatable {
         case idle
@@ -1380,6 +1386,7 @@ struct HPDView: View {
     @State private var didAutoFetch: Bool = false
 
     @State private var expandedLocationIDs: Set<UUID> = []
+    @State private var expandedLocations: [String: Bool] = [:]
     @State private var collapsedDates: Set<String> = []
     @State private var mileageVIN: String? = nil
     @State private var spvVIN: String? = nil
@@ -1985,6 +1992,21 @@ struct HPDView: View {
         return t
     }
 
+    private func shortStreetAddress(_ address: String) -> String {
+        var s = address
+        let lower = s.lowercased()
+        for marker in [" houston", ", tx", " tx ", " texas"] {
+            if let r = lower.range(of: marker) {
+                s = String(s[..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                break
+            }
+        }
+        if let r = s.range(of: #"\s*\b\d{5}(?:-\d{4})?\b\s*$"#, options: .regularExpression) {
+            s = String(s[..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return s.isEmpty ? address : s
+    }
+
     private var uniqueAddresses: [String] {
         // Group by street number key — keeps the first full readable address per number.
         // Passive guard blocks exact garbage artifacts (e.g. "Llc", "Inc", very short strings).
@@ -2070,13 +2092,15 @@ struct HPDView: View {
         .listStyle(.plain)
         .listSectionSpacing(.custom(0))
         .allowsHitTesting(false)
-        .navigationTitle(favoritesOnly ? "FAVORITES" : "HPD AUCTION")
+        .navigationTitle(favoritesOnly ? "FAVORITES (\(entries.count))" : "HPD AUCTION (\(entries.count))")
         .navigationBarTitleDisplayMode(.inline)
     }
 
     @ViewBuilder private var vehicleList: some View {
         if isLoading && entries.isEmpty {
             skeletonList
+        } else if favoritesOnly {
+            favoritesWalletList
         } else {
         List {
             // Unified header row: chips + error + counter in one cell
@@ -2111,11 +2135,27 @@ struct HPDView: View {
                         .padding(.vertical, 2)
                     }
                 }
+                if let activeFilter = externalLocationFilter {
+                    HStack {
+                        Text("Filtering by: \(activeFilter)")
+                            .font(.subheadline.bold())
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Spacer()
+                        Button {
+                            externalLocationFilter = nil
+                        } label: {
+                            Label("Clear", systemImage: "xmark.circle.fill")
+                                .font(.subheadline.bold())
+                                .foregroundStyle(.red)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.accentColor.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
                 emptyOrErrorView()
-                Text("\(filteredEntries().count) vehicles found \(locationFilterLabel)")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
             }
             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 4, trailing: 16))
             .listRowBackground(Color.clear)
@@ -2148,7 +2188,7 @@ struct HPDView: View {
         }
         .listStyle(.plain)
         .listSectionSpacing(.custom(0))
-        .navigationTitle(favoritesOnly ? "FAVORITES" : "HPD AUCTION")
+        .navigationTitle("HPD AUCTION (\(filteredEntries().count))")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable {
             await supabaseService.syncFetchFavoritesFromSupabase()
@@ -2156,7 +2196,130 @@ struct HPDView: View {
         } // end else (isLoading && entries.isEmpty)
     }
 
+    // MARK: - Favorites Apple Wallet view (Location → Date → Vehicles sorted by odometer desc)
 
+    @ViewBuilder private var favoritesWalletList: some View {
+        ZStack {
+            Color(UIColor.systemGroupedBackground).ignoresSafeArea()
+            VStack(spacing: 0) {
+                // Preserve location filter chips if any are active
+                if !selectedLocationFilters.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(Array(selectedLocationFilters).sorted(), id: \.self) { loc in
+                                Button {
+                                    var updated = selectedLocationFilters
+                                    updated.remove(loc)
+                                    selectedLocationFilters = updated
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Text(loc).lineLimit(1)
+                                        Image(systemName: "xmark.circle.fill")
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                                .tint(.secondary)
+                                .clipShape(Capsule())
+                            }
+                            Button(role: .destructive) {
+                                selectedLocationFilters = []
+                            } label: {
+                                Label("Clear Filters", systemImage: "xmark.circle.fill")
+                            }
+                            .buttonStyle(.bordered)
+                            .clipShape(Capsule())
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                    }
+                }
+
+                if filteredEntries().isEmpty && !isLoading {
+                    ContentUnavailableView {
+                        Label("No Favorites Yet", systemImage: "star.slash")
+                    } description: {
+                        Text("Vehicles you star will appear here.")
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 16) {
+                            ForEach(groupedByLocationForFavorites(), id: \.location) { group in
+                                VStack(alignment: .leading, spacing: 12) {
+                                    DisclosureGroup(
+                                        isExpanded: Binding(
+                                            get: { expandedLocations[group.location] ?? true },
+                                            set: { expandedLocations[group.location] = $0 }
+                                        )
+                                    ) {
+                                        // Date groups — permanently visible inside each location
+                                        ForEach(group.dates, id: \.date) { datePair in
+                                            VStack(alignment: .leading, spacing: 8) {
+                                                HStack {
+                                                    Image(systemName: "calendar")
+                                                        .foregroundColor(.accentColor)
+                                                        .font(.subheadline)
+                                                    Text(datePair.date)
+                                                        .font(.subheadline.bold())
+                                                        .foregroundStyle(.secondary)
+                                                    Spacer()
+                                                    Text("\(datePair.vehicles.count) vehicle\(datePair.vehicles.count == 1 ? "" : "s")")
+                                                        .font(.caption.bold())
+                                                        .padding(.horizontal, 8)
+                                                        .padding(.vertical, 4)
+                                                        .background(Color.accentColor.opacity(0.1))
+                                                        .foregroundColor(.accentColor)
+                                                        .clipShape(Capsule())
+                                                }
+
+                                                // Vehicles sorted by odometer descending — address suppressed (shown as section header)
+                                                VStack(spacing: 8) {
+                                                    ForEach(datePair.vehicles) { e in
+                                                        card(for: e, showAddress: false)
+                                                    }
+                                                }
+                                            }
+
+                                            if datePair.date != group.dates.last?.date {
+                                                Divider().padding(.top, 4)
+                                            }
+                                        }
+                                    } label: {
+                                        // Location header — city/state/zip stripped, single-line enforced
+                                        let shortAddr = group.location.isEmpty
+                                            ? "Unknown Location"
+                                            : shortStreetAddress(group.location)
+                                        HStack(spacing: 8) {
+                                            Image(systemName: "mappin.and.ellipse")
+                                                .foregroundColor(.accentColor)
+                                                .font(.headline)
+                                            Text(shortAddr.capitalized)
+                                                .font(.title3.bold())
+                                                .lineLimit(1)
+                                                .truncationMode(.tail)
+                                                .foregroundStyle(.primary)
+                                        }
+                                    }
+                                    .tint(.accentColor)
+                                }
+                                .padding(20)
+                                .background(Color(UIColor.secondarySystemGroupedBackground))
+                                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                                .shadow(color: Color.primary.opacity(0.1), radius: 10, x: 0, y: 5)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                    }
+                }
+            }
+        }
+        .navigationTitle("FAVORITES (\(filteredEntries().count))")
+        .navigationBarTitleDisplayMode(.inline)
+        .refreshable {
+            await supabaseService.syncFetchFavoritesFromSupabase()
+        }
+    }
 
 
 
@@ -2225,7 +2388,7 @@ struct HPDView: View {
                 HStack(spacing: 12) {
                     SearchBar(
                         text: $searchText,
-                        placeholder: favoritesOnly ? "Search in favorites..." : "Search VIN, Lot, etc."
+                        placeholder: favoritesOnly ? "Search in favorites..." : "Search VIN, Year, Brand or Model"
                     )
                     filterSortMenu
                 }
@@ -2637,9 +2800,17 @@ struct HPDView: View {
                 }
         }
 
-        // Main tab excludes favorites to enforce strict separation
+        // Main tab excludes favorites to enforce strict separation —
+        // bypassed when a deep-link filter is active so the full lot inventory is visible.
         var entriesToFilter = entries.filter { !isDateInPast($0.dateScheduled) }
-        entriesToFilter = entriesToFilter.filter { !supabaseService.favorites.contains(normalizeVIN($0.vin)) }
+        if externalLocationFilter == nil {
+            entriesToFilter = entriesToFilter.filter { !supabaseService.favorites.contains(normalizeVIN($0.vin)) }
+        }
+
+        // External cross-tab filter injected from Dashboard deep-link (streetNumberKey tolerates address suffix variants)
+        if let ext = externalLocationFilter {
+            entriesToFilter = entriesToFilter.filter { $0.lotAddress.streetNumberKey == ext.streetNumberKey }
+        }
 
         // a) Search bar
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2799,6 +2970,43 @@ struct HPDView: View {
         }
     }
 
+    // MARK: - Favorites: Location-primary grouping (alphabetical locations → chronological dates → odometer desc)
+
+    private func groupedByLocationForFavorites() -> [(location: String, dates: [(date: String, vehicles: [HPDEntry])])] {
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.dateFormat = "MM/dd/yyyy"
+
+        let base = filteredEntries()
+        let byLocation = Dictionary(grouping: base) { e -> String in
+            let addr = sanitizedAddressForMaps(e.lotAddress)
+            return addr.isEmpty ? e.lotName.trimmingCharacters(in: .whitespacesAndNewlines) : addr
+        }
+
+        return byLocation
+            .sorted { $0.key < $1.key }
+            .map { location, vehicles in
+                let byDate = Dictionary(grouping: vehicles, by: { $0.dateScheduled })
+                let sortedDates = byDate.keys.sorted { a, b in
+                    switch (df.date(from: a), df.date(from: b)) {
+                    case let (da?, db?): return da < db
+                    default: return a < b
+                    }
+                }
+                let datePairs = sortedDates.map { dateKey -> (date: String, vehicles: [HPDEntry]) in
+                    let dayVehicles = (byDate[dateKey] ?? []).sorted { a, b in
+                        let aInfo = supabaseService.odoByVIN[a.vin] ?? supabaseService.odoByVIN[normalizeVIN(a.vin)]
+                        let bInfo = supabaseService.odoByVIN[b.vin] ?? supabaseService.odoByVIN[normalizeVIN(b.vin)]
+                        let aOdo = Int(aInfo?.odometer ?? "0") ?? 0
+                        let bOdo = Int(bInfo?.odometer ?? "0") ?? 0
+                        return aOdo > bOdo
+                    }
+                    return (date: dateKey, vehicles: dayVehicles)
+                }
+                return (location: location, dates: datePairs)
+            }
+    }
+
     // MARK: - Date helpers for coloring section headers
     private func compareDateToToday(_ dateStr: String) -> Int? {
         // Returns: -1 (past), 0 (today), 1 (future)
@@ -2845,7 +3053,7 @@ struct HPDView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder private func card(for e: HPDEntry) -> some View {
+    @ViewBuilder private func card(for e: HPDEntry, showAddress: Bool = true) -> some View {
         let cardKey   = normalizeVIN(e.vin)
         let isFav     = supabaseService.favorites.contains(cardKey)
         let processed = lastProcessedVIN == cardKey
@@ -2893,10 +3101,12 @@ struct HPDView: View {
                         }
                     }()
 
-                    Text(displayAddr)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    if showAddress {
+                        Text(displayAddr)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
                 Spacer(minLength: 4)
                 if let info = odoInfo {

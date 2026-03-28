@@ -62,18 +62,28 @@ struct ContentView: View {
     // Shared across all tabs — prevents duplicate network calls and keeps state in sync.
     @StateObject private var supabaseService = SupabaseService()
 
+    // Cross-tab routing state — elevated here so HomeSummaryView and HPDView share a single source of truth.
+    @State private var selectedTab: Int = 0
+    @State private var crossTabLocationFilter: String? = nil
+
     var body: some View {
         Group {
             if !isAuthReady {
                 ProgressView()
             } else if isAuthenticated {
-                TabView {
-                    HPDView()
+                TabView(selection: $selectedTab) {
+                    HomeSummaryView(selectedTab: $selectedTab, targetLocationFilter: $crossTabLocationFilter)
+                        .tabItem { Label("Dashboard", systemImage: "chart.bar.xaxis") }
+                        .tag(0)
+                    HPDView(externalLocationFilter: $crossTabLocationFilter)
                         .tabItem { Label("HPD AUCTION", systemImage: "car.fill") }
-                    HPDView(favoritesOnly: true)
+                        .tag(1)
+                    HPDView(favoritesOnly: true, externalLocationFilter: .constant(nil))
                         .tabItem { Label("FAVORITES", systemImage: "star.fill") }
+                        .tag(2)
                     HPDSettingsView()
                         .tabItem { Label("SETTINGS", systemImage: "gearshape.fill") }
+                        .tag(3)
                 }
                 .environmentObject(supabaseService)
             } else {

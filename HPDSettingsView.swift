@@ -87,8 +87,11 @@ struct LegalTermsView: View {
 struct AdminUserDetailSheet: View {
     let user: AdminUserStatus
     let supabaseService: SupabaseService
+    let currentUserID: UUID?
     let onActionComplete: () -> Void
     @Environment(\.dismiss) var dismiss
+
+    private var isSelf: Bool { currentUserID == user.id }
 
     var body: some View {
         NavigationStack {
@@ -113,30 +116,32 @@ struct AdminUserDetailSheet: View {
                     .tint(count >= 45 ? .red : (count >= 30 ? .yellow : .green))
                 }
 
-                Section(header: Text("Super Admin Actions")) {
-                    Button(role: .none) {
-                        Task {
-                            await supabaseService.resetUserLimits(userId: user.id)
-                            onActionComplete()
-                            dismiss()
+                if !isSelf {
+                    Section(header: Text("Super Admin Actions")) {
+                        Button(role: .none) {
+                            Task {
+                                await supabaseService.resetUserLimits(userId: user.id)
+                                onActionComplete()
+                                dismiss()
+                            }
+                        } label: {
+                            Label("Reset Daily Quota", systemImage: "arrow.counterclockwise")
+                                .foregroundStyle(.blue)
                         }
-                    } label: {
-                        Label("Reset Daily Quota", systemImage: "arrow.counterclockwise")
-                            .foregroundStyle(.blue)
-                    }
 
-                    Button(role: user.is_banned == true ? .none : .destructive) {
-                        Task {
-                            await supabaseService.syncToggleBan(userId: user.id, isBanned: !(user.is_banned == true))
-                            onActionComplete()
-                            dismiss()
+                        Button(role: user.is_banned == true ? .none : .destructive) {
+                            Task {
+                                await supabaseService.syncToggleBan(userId: user.id, isBanned: !(user.is_banned == true))
+                                onActionComplete()
+                                dismiss()
+                            }
+                        } label: {
+                            Label(
+                                user.is_banned == true ? "Unban User" : "Ban User",
+                                systemImage: user.is_banned == true ? "lock.open.fill" : "nosign"
+                            )
+                            .foregroundStyle(user.is_banned == true ? .green : .red)
                         }
-                    } label: {
-                        Label(
-                            user.is_banned == true ? "Unban User" : "Ban User",
-                            systemImage: user.is_banned == true ? "lock.open.fill" : "nosign"
-                        )
-                        .foregroundStyle(user.is_banned == true ? .green : .red)
                     }
                 }
             }
@@ -226,7 +231,7 @@ struct UserActivityDetailView: View {
             }
         }
         .sheet(item: $selectedUser) { user in
-            AdminUserDetailSheet(user: user, supabaseService: supabaseService) {
+            AdminUserDetailSheet(user: user, supabaseService: supabaseService, currentUserID: supabase.auth.currentUser?.id) {
                 Task { await fetch() }
             }
         }
