@@ -11,6 +11,7 @@ import UserNotifications
 @main
 struct KbuckApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @StateObject private var storeManager = StoreManager()
 
     init() {
         NotificationManager.shared.configure()
@@ -19,6 +20,10 @@ struct KbuckApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(storeManager)
+                .task {
+                    await storeManager.requestProducts()
+                }
         }
     }
 }

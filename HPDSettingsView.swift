@@ -332,6 +332,7 @@ struct UserActivityDetailView: View {
 
 struct HPDSettingsView: View {
     @EnvironmentObject private var supabaseService: SupabaseService
+    @EnvironmentObject private var storeManager: StoreManager
 
     @AppStorage("userRole")            private var userRole: String = "user"
     @AppStorage("hpdManualURLEnabled") private var manualURLModeEnabled: Bool = false
@@ -345,6 +346,7 @@ struct HPDSettingsView: View {
     @State private var showSignOutAlert   = false
     @State private var showHPDWeb: Bool   = false
     @State private var showTerms: Bool    = false
+    @State private var showPaywall: Bool  = false
     @State private var isLoadingProfile: Bool = false
     @State private var isDataSourceExpanded: Bool = false
 
@@ -356,9 +358,13 @@ struct HPDSettingsView: View {
 
     private var currentCount: Int { supabaseService.currentProfile?.scrape_count_today ?? 0 }
 
+    private var dailyLimit: Int { storeManager.activeSubscriptionTier.hpdSearchLimit }
+
     private var progressTint: Color {
-        if currentCount >= 45 { return .red }
-        if currentCount >= 30 { return .yellow }
+        guard dailyLimit != Int.max, dailyLimit > 0 else { return .green }
+        let ratio = Double(currentCount) / Double(dailyLimit)
+        if ratio >= 0.9 { return .red }
+        if ratio >= 0.6 { return .yellow }
         return .green
     }
 
@@ -408,6 +414,27 @@ struct HPDSettingsView: View {
                     }
                 }
 
+                // Regular user: Subscription tier + Upgrade Plan
+                if userRole != "super_admin" {
+                    Section(header: Text("Subscription")) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Current Plan")
+                                    .font(.subheadline)
+                                Text(storeManager.activeSubscriptionTier.displayName)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if storeManager.activeSubscriptionTier != .platinum {
+                                Button("Upgrade Plan") { showPaywall = true }
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+                            }
+                        }
+                    }
+                }
+
                 // Regular user: Daily Fetch Quota inline
                 if userRole != "super_admin" {
                     Section(header: Text("Daily Fetch Quota")) {
@@ -416,18 +443,24 @@ struct HPDSettingsView: View {
                         } else {
                             TimelineView(.everyMinute) { context in
                                 VStack(alignment: .leading, spacing: 10) {
-                                    ProgressView(
-                                        value: Double(currentCount),
-                                        total: 50.0
-                                    ) {
-                                        Text("Successful fetches today")
+                                    if dailyLimit == Int.max {
+                                        Label("Unlimited fetches available", systemImage: "infinity")
                                             .font(.subheadline)
-                                    } currentValueLabel: {
-                                        Text("\(currentCount) of 50")
-                                            .font(.caption.monospacedDigit())
+                                            .foregroundStyle(.green)
+                                    } else {
+                                        ProgressView(
+                                            value: Double(currentCount),
+                                            total: Double(dailyLimit)
+                                        ) {
+                                            Text("Successful fetches today")
+                                                .font(.subheadline)
+                                        } currentValueLabel: {
+                                            Text("\(currentCount) of \(dailyLimit)")
+                                                .font(.caption.monospacedDigit())
+                                        }
+                                        .progressViewStyle(.linear)
+                                        .tint(progressTint)
                                     }
-                                    .progressViewStyle(.linear)
-                                    .tint(progressTint)
 
                                     Text(resetsInMessage(now: context.date))
                                         .font(.caption)
@@ -589,6 +622,9 @@ struct HPDSettingsView: View {
             }
             .sheet(isPresented: $showTerms) {
                 LegalTermsView()
+            }
+            .sheet(isPresented: $showPaywall) {
+                PaywallView()
             }
             .onAppear {
                 if hpdManualURLInput.isEmpty {

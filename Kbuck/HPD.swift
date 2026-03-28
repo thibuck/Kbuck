@@ -7,6 +7,7 @@ import EventKit
 import CoreLocation
 import MapKit
 import Supabase
+import StoreKit
 
 
 struct SafariView: UIViewControllerRepresentable {
@@ -1395,7 +1396,9 @@ struct HPDView: View {
 
     private let defaultURLString = "https://www.houstontx.gov/police/auto_dealers_detail/Vehicles_Scheduled_For_Auction.htm"
     @EnvironmentObject private var supabaseService: SupabaseService
+    @EnvironmentObject private var storeManager: StoreManager
 
+    @AppStorage("userRole")            private var userRole: String = "user"
     @AppStorage("hpdManualURLEnabled") private var manualURLModeEnabled: Bool = false
     @AppStorage("hpdManualURLInput")   private var hpdManualURLInput: String = ""
     @AppStorage("hpdRefreshTrigger")   private var hpdRefreshTrigger: Int = 0
@@ -1476,6 +1479,8 @@ struct HPDView: View {
     @State private var showMapAlert: Bool = false
     @State private var showQuickDataInfo: Bool = false
     @State private var showCarfaxTeaser: Bool = false
+    @State private var showCarfaxUpsellDialog: Bool = false
+    @State private var showPaywall: Bool = false
     @State private var pendingMapAddress: String = ""
     @State private var pendingMapTime: String = ""
     @State private var selectedAddressForMap: String = ""
@@ -2510,6 +2515,9 @@ struct HPDView: View {
                 WelcomeOnboardingView()
                     .interactiveDismissDisabled()
             }
+            .sheet(isPresented: $showPaywall) {
+                PaywallView()
+            }
 
             if extractionState != .idle {
                 ZStack {
@@ -2724,9 +2732,27 @@ struct HPDView: View {
             Text("• Mileage: Last recorded odometer during state inspection.\n• Value: Estimated DMV Private Party Value.\n\nUSAGE LIMITS:\nTo ensure system stability, you are limited to 50 successful data extractions per day, and a maximum of 5 successful extractions per specific vehicle. Failed attempts do not count against your limit.\n\nNOTE: This is historical data from third-party public records. We do not guarantee its accuracy.")
         }
         .alert("Carfax Report", isPresented: $showCarfaxTeaser) {
-            Button("OK", role: .cancel) { }
+            Button("Cancel", role: .cancel) { }
+            Button("View Plans") {
+                showPaywall = true
+            }
         } message: {
-            Text("Coming soon exclusively for Ultimate Plans.")
+            Text("Carfax reports are available exclusively for Platinum Plans. Upgrade your account to unlock this feature.")
+        }
+        .confirmationDialog("Carfax Report", isPresented: $showCarfaxUpsellDialog, titleVisibility: .visible) {
+            Button("Buy 1 Report for $15.99") {
+                Task {
+                    if let standardProduct = storeManager.consumables.first(where: { $0.id == "com.kbuck.carfax.standard" }) {
+                        _ = try? await storeManager.purchase(standardProduct)
+                    }
+                }
+            }
+            Button("Upgrade to Platinum (Reports for $10.99)") {
+                showPaywall = true
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Get an instant vehicle history report.")
         }
         .alert("Legal Disclaimer", isPresented: $showLegalDisclaimer) {
             Button("Cancel", role: .cancel) {
@@ -3253,7 +3279,17 @@ struct HPDView: View {
                 }
                 .overlay(alignment: .trailing) {
                     Button {
-                        showCarfaxTeaser = true
+                        if storeManager.activeSubscriptionTier == .platinum || userRole == "super_admin" {
+                            // Platinum/admin: discounted Carfax rate
+                            Task {
+                                if let platinumCarfax = storeManager.consumables.first(where: { $0.id == "com.kbuck.carfax.platinum" }) {
+                                    _ = try? await storeManager.purchase(platinumCarfax)
+                                }
+                            }
+                        } else {
+                            // All other tiers: show dual-price upsell dialog
+                            showCarfaxUpsellDialog = true
+                        }
                     } label: {
                         Image("carfax")
                             .resizable()
@@ -3303,8 +3339,7 @@ struct HPDView: View {
                                     showLegalDisclaimer = true
                                 } else {
                                     UINotificationFeedbackGenerator().notificationOccurred(.error)
-                                    extractionErrorMessage = limitStatus.reason ?? "Extraction limit reached."
-                                    showExtractionErrorAlert = true
+                                    showPaywall = true
                                 }
                             }
                         }

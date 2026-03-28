@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BCB1B9782F788AA400E59B19 /* KbuckStore.storekit in Resources */ = {isa = PBXBuildFile; fileRef = BCB1B9772F788AA400E59B19 /* KbuckStore.storekit */; };
+		BCB1B9792F788AA400E59B19 /* KbuckStore.storekit in Resources */ = {isa = PBXBuildFile; fileRef = BCB1B9772F788AA400E59B19 /* KbuckStore.storekit */; };
+		BCB1B97A2F788AA400E59B19 /* KbuckStore.storekit in Resources */ = {isa = PBXBuildFile; fileRef = BCB1B9772F788AA400E59B19 /* KbuckStore.storekit */; };
 		BCD18D682F746F5B0018C5E6 /* Auth in Frameworks */ = {isa = PBXBuildFile; productRef = BCD18D672F746F5B0018C5E6 /* Auth */; };
 		BCD18D6A2F746F5B0018C5E6 /* Functions in Frameworks */ = {isa = PBXBuildFile; productRef = BCD18D692F746F5B0018C5E6 /* Functions */; };
 		BCD18D6C2F746F5B0018C5E6 /* PostgREST in Frameworks */ = {isa = PBXBuildFile; productRef = BCD18D6B2F746F5B0018C5E6 /* PostgREST */; };
@@ -40,6 +43,7 @@
 		BC9A493B2EA2CCAE00011997 /* Kbuck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Kbuck.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BC9A49482EA2CCAF00011997 /* KbuckTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KbuckTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BC9A49522EA2CCAF00011997 /* KbuckUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KbuckUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		BCB1B9772F788AA400E59B19 /* KbuckStore.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = KbuckStore.storekit; sourceTree = "<group>"; };
 		BCD18D732F7478820018C5E6 /* HPDModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HPDModels.swift; sourceTree = "<group>"; };
 		BCD18D752F7478CD0018C5E6 /* HPDParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HPDParser.swift; sourceTree = "<group>"; };
 		BCD18D772F7479020018C5E6 /* SupabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseService.swift; sourceTree = "<group>"; };
@@ -118,6 +122,7 @@
 				BCD18D732F7478820018C5E6 /* HPDModels.swift */,
 				BCD18D752F7478CD0018C5E6 /* HPDParser.swift */,
 				BCD18D772F7479020018C5E6 /* SupabaseService.swift */,
+				BCB1B9772F788AA400E59B19 /* KbuckStore.storekit */,
 				BCD18D792F747AE60018C5E6 /* HPDSettingsView.swift */,
 			);
 			sourceTree = "<group>";
@@ -261,6 +266,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BCB1B9782F788AA400E59B19 /* KbuckStore.storekit in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -268,6 +274,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BCB1B9792F788AA400E59B19 /* KbuckStore.storekit in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -275,6 +282,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BCB1B97A2F788AA400E59B19 /* KbuckStore.storekit in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

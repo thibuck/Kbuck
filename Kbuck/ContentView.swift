@@ -57,7 +57,9 @@ struct ContentView: View {
     @State private var isAuthenticated = false
     @State private var isAuthReady     = false
     @State private var didBootstrapFavorites = false
-    @AppStorage("hpdUserBanned") private var isUserBanned: Bool = false
+    @State private var showInitialPaywall: Bool = false
+    @AppStorage("hpdUserBanned")          private var isUserBanned: Bool = false
+    @AppStorage("hasSeenInitialPaywall")  private var hasSeenInitialPaywall: Bool = false
 
     // Persisted role — written here on sign-in, read everywhere else.
     // Defaults to "user" so no privileged UI is ever shown before the fetch resolves.
@@ -109,6 +111,10 @@ struct ContentView: View {
                         }
                         fetchRole()
                         runGlobalLifecycleSync()
+                        if !hasSeenInitialPaywall && userRole != "super_admin" {
+                            hasSeenInitialPaywall = true
+                            showInitialPaywall = true
+                        }
                     }
                 case .signedIn:
                     isAuthenticated = true
@@ -118,6 +124,10 @@ struct ContentView: View {
                     }
                     fetchRole()
                     runGlobalLifecycleSync()
+                    if !hasSeenInitialPaywall && userRole != "super_admin" {
+                        hasSeenInitialPaywall = true
+                        showInitialPaywall = true
+                    }
                 case .signedOut, .userDeleted:
                     isAuthenticated = false
                     didBootstrapFavorites = false
@@ -131,6 +141,9 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active, isAuthenticated else { return }
             runGlobalLifecycleSync()
+        }
+        .sheet(isPresented: $showInitialPaywall) {
+            PaywallView()
         }
         .hideKeyboardOnTap()
     }
