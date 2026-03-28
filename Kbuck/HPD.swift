@@ -78,17 +78,17 @@ struct MileageWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.defaultWebpagePreferences.allowsContentJavaScript = true
-        let suppressKeyboardScript = WKUserScript(
-            source: "setTimeout(function() { try { if (document.activeElement) { document.activeElement.blur(); } } catch(e) {} }, 50);",
-            injectionTime: .atDocumentEnd,
-            forMainFrameOnly: true
-        )
-        config.userContentController.addUserScript(suppressKeyboardScript)
+        let jScript = "var meta = document.createElement('meta'); meta.name = 'viewport'; meta.content = 'width=device-width, initial-scale=1.0'; document.getElementsByTagName('head')[0].appendChild(meta);"
+        let userScript = WKUserScript(source: jScript, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        config.userContentController.addUserScript(userScript)
         let webView = WKWebView(frame: .zero, configuration: config)
         context.coordinator.webView = webView
         config.userContentController.add(context.coordinator, name: context.coordinator.captchaMessageChannel)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
         context.coordinator.isMessageHandlerAttached = true
         return webView
     }
@@ -212,7 +212,6 @@ struct MileageWebView: UIViewRepresentable {
                 if let blankURL = URL(string: "about:blank") {
                     webView.load(URLRequest(url: blankURL))
                 }
-                print("🧼 [MileageWebView] Forced reset before new extraction")
                 webView.load(URLRequest(url: url))
                 return
             }
@@ -899,7 +898,6 @@ struct SPVWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            print("🟢 [SPVWebView] Finished loading: \(webView.url?.absoluteString ?? "nil")")
             guard isActive else { return }
             let cleanVIN = sanitizeVIN(vin)
             let cleanODO = sanitizeODO(mileage)
@@ -1016,27 +1014,22 @@ struct SPVWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            print("🔴 [SPVWebView] Failed load: \(error.localizedDescription)")
             guard isActive else { return }
             if isNavigationCancelled(error) {
-                print("⚪️ [SPVWebView] Ignoring NSURLErrorCancelled (-999)")
                 return
             }
             handleFailure("Extraction Failed: Unable to load private value page.")
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            print("🔴 [SPVWebView] Failed provisional load: \(error.localizedDescription)")
             guard isActive else { return }
             if isNavigationCancelled(error) {
-                print("⚪️ [SPVWebView] Ignoring NSURLErrorCancelled (-999)")
                 return
             }
             handleFailure("Extraction Failed: Unable to load private value page.")
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-            print("🟡 [SPVWebView] Started loading: \(webView.url?.absoluteString ?? "nil")")
         }
 
         private func isNavigationCancelled(_ error: Error) -> Bool {
@@ -1480,9 +1473,12 @@ struct HPDView: View {
     @State private var webVIN: String? = nil
     @State private var showWebConfirm: Bool = false
     @State private var showMapConfirm: Bool = false
+    @State private var showMapAlert: Bool = false
     @State private var showQuickDataInfo: Bool = false
+    @State private var showCarfaxTeaser: Bool = false
     @State private var pendingMapAddress: String = ""
     @State private var pendingMapTime: String = ""
+    @State private var selectedAddressForMap: String = ""
     @State private var statVinURL: URL? = nil
     @AppStorage("openWebInSafari") private var openWebInSafari: Bool = false
 
@@ -2262,6 +2258,8 @@ struct HPDView: View {
                     ScrollView {
                         LazyVStack(spacing: 16) {
                             ForEach(cachedGroupedByLocationForFavorites, id: \.location) { group in
+                                let totalVehicles = group.dates.reduce(0) { $0 + $1.vehicles.count }
+                                let shortAddress = group.location.components(separatedBy: " Houston").first ?? group.location
                                 VStack(alignment: .leading, spacing: 12) {
                                     DisclosureGroup(
                                         isExpanded: Binding(
@@ -2280,13 +2278,6 @@ struct HPDView: View {
                                                         .font(.subheadline.bold())
                                                         .foregroundStyle(.secondary)
                                                     Spacer()
-                                                    Text("\(datePair.vehicles.count) vehicle\(datePair.vehicles.count == 1 ? "" : "s")")
-                                                        .font(.caption.bold())
-                                                        .padding(.horizontal, 8)
-                                                        .padding(.vertical, 4)
-                                                        .background(Color.accentColor.opacity(0.1))
-                                                        .foregroundColor(.accentColor)
-                                                        .clipShape(Capsule())
                                                 }
 
                                                 // Vehicles sorted by odometer descending — address suppressed (shown as section header)
@@ -2301,20 +2292,41 @@ struct HPDView: View {
                                                 Divider().padding(.top, 4)
                                             }
                                         }
+
+                                        HStack {
+                                            Spacer()
+                                            Button {
+                                                selectedAddressForMap = group.location
+                                                showMapAlert = true
+                                            } label: {
+                                                HStack(spacing: 8) {
+                                                    Image(systemName: "location.fill")
+                                                    Text("Navigate")
+                                                        .font(.subheadline.bold())
+                                                }
+                                                .padding(.vertical, 8)
+                                                .padding(.horizontal, 20)
+                                                .background(Color.blue.opacity(0.12))
+                                                .clipShape(Capsule())
+                                                .foregroundStyle(.blue)
+                                            }
+                                            .buttonStyle(.plain)
+                                            Spacer()
+                                        }
+                                        .padding(.top, 16)
                                     } label: {
-                                        // Location header — city/state/zip stripped, single-line enforced
-                                        let shortAddr = group.location.isEmpty
-                                            ? "Unknown Location"
-                                            : shortStreetAddress(group.location)
-                                        HStack(spacing: 8) {
+                                        HStack(spacing: 6) {
                                             Image(systemName: "mappin.and.ellipse")
-                                                .foregroundColor(.accentColor)
-                                                .font(.headline)
-                                            Text(shortAddr.capitalized)
+                                                .font(.title3)
+                                                .foregroundStyle(.blue)
+
+                                            Text("\(shortAddress.capitalized) (\(totalVehicles))")
                                                 .font(.title3.bold())
+                                                .foregroundStyle(.blue)
                                                 .lineLimit(1)
                                                 .truncationMode(.tail)
-                                                .foregroundStyle(.primary)
+
+                                            Spacer()
                                         }
                                     }
                                     .tint(.accentColor)
@@ -2327,6 +2339,17 @@ struct HPDView: View {
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
+                    }
+                    .alert("Open Apple Maps", isPresented: $showMapAlert) {
+                        Button("Cancel", role: .cancel) { }
+                        Button("Navigate") {
+                            if let encodedAddress = selectedAddressForMap.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+                               let url = URL(string: "maps://?daddr=\(encodedAddress)") {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                    } message: {
+                        Text("Do you want to leave the app and navigate to \(selectedAddressForMap)?")
                     }
                 }
             }
@@ -2394,7 +2417,10 @@ struct HPDView: View {
                         text: $searchText,
                         placeholder: favoritesOnly ? "Search in favorites..." : "Search VIN, Year, Brand or Model"
                     )
-                    filterSortMenu
+
+                    if !favoritesOnly {
+                        filterSortMenu
+                    }
                 }
                 .padding(.horizontal, 16)
 
@@ -2697,6 +2723,11 @@ struct HPDView: View {
         } message: {
             Text("• Mileage: Last recorded odometer during state inspection.\n• Value: Estimated DMV Private Party Value.\n\nUSAGE LIMITS:\nTo ensure system stability, you are limited to 50 successful data extractions per day, and a maximum of 5 successful extractions per specific vehicle. Failed attempts do not count against your limit.\n\nNOTE: This is historical data from third-party public records. We do not guarantee its accuracy.")
         }
+        .alert("Carfax Report", isPresented: $showCarfaxTeaser) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Coming soon exclusively for Ultimate Plans.")
+        }
         .alert("Legal Disclaimer", isPresented: $showLegalDisclaimer) {
             Button("Cancel", role: .cancel) {
                 pendingExtractionEntry = nil
@@ -2779,16 +2810,35 @@ struct HPDView: View {
     private func filteredEntries() -> [HPDEntry] {
         let selectedSortOption = sortOption
         let pricedOnly = showPricedOnly
-        // Favorites-only tab: early exit — bypass all filters, respect sort only
+        // Favorites-only tab: apply search then sort
         if favoritesOnly {
             let df = DateFormatter()
             df.locale = Locale(identifier: "en_US_POSIX")
             df.dateFormat = "MM/dd/yyyy"
             let asc = sortAscending
-            return entries.filter { !isDateInPast($0.dateScheduled) }
+
+            // 1. Get base valid favorites
+            var favs = entries.filter { !isDateInPast($0.dateScheduled) }
                 .filter { supabaseService.favorites.contains(normalizeVIN($0.vin)) }
                 .filter { !isCardEmpty($0) }
-                .sorted { a, b in
+
+            // 2. Apply search text
+            let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !q.isEmpty {
+                let lq = q.lowercased()
+                favs = favs.filter { e in
+                    e.make.lowercased().contains(lq)
+                        || e.model.lowercased().contains(lq)
+                        || normalizedYear(e.year).lowercased().contains(lq)
+                        || e.vin.lowercased().contains(lq)
+                        || e.lotName.lowercased().contains(lq)
+                        || e.lotAddress.lowercased().contains(lq)
+                        || e.dateScheduled.lowercased().contains(lq)
+                }
+            }
+
+            // 3. Sort and return
+            return favs.sorted { a, b in
                     switch selectedSortOption {
                     case .date:
                         let da = df.date(from: a.dateScheduled)
@@ -3079,6 +3129,7 @@ struct HPDView: View {
         let expanded  = expandedLocationIDs.contains(e.id)
         let odoInfo   = supabaseService.odoByVIN[e.vin] ?? supabaseService.odoByVIN[cardKey]
         let yearStr   = normalizedYear(e.year)
+        let entry = e
         let shareText: String = {
             var parts = ["\(yearStr) \(e.make) \(e.model)", "VIN: \(e.vin)"]
             if let odo = odoInfo {
@@ -3179,7 +3230,7 @@ struct HPDView: View {
                     Image(systemName: "tag.fill")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    Text(e.vin)
+                    Text("VIN: \(entry.vin)")
                         .font(.subheadline)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
@@ -3199,6 +3250,17 @@ struct HPDView: View {
                         try? await Task.sleep(nanoseconds: 2_000_000_000)
                         copiedVIN = nil
                     }
+                }
+                .overlay(alignment: .trailing) {
+                    Button {
+                        showCarfaxTeaser = true
+                    } label: {
+                        Image("carfax")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 32, height: 32)
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 // Odometer, inspection date, private value
@@ -3282,21 +3344,6 @@ struct HPDView: View {
                     .frame(maxWidth: .infinity)
 
                     Button {
-                        hapticImpact(.light)
-                        pendingMapAddress = sanitizedAddressForMaps(e.lotAddress)
-                        if pendingMapAddress.isEmpty { pendingMapAddress = e.lotName }
-                        pendingMapTime = (e.time ?? "")
-                            .replacingOccurrences(of: ":00", with: "")
-                            .replacingOccurrences(of: " AM", with: "am")
-                            .replacingOccurrences(of: " PM", with: "pm")
-                        showMapConfirm = true
-                    } label: {
-                        Image(systemName: "location.fill")
-                    }
-                    .buttonStyle(.bordered)
-                    .frame(maxWidth: .infinity)
-
-                    Button {
                         showQuickDataInfo = true
                     } label: {
                         Image(systemName: "info.circle.fill")
@@ -3305,17 +3352,17 @@ struct HPDView: View {
                     .frame(maxWidth: .infinity)
                 }
             }
-        }
-        .font(.system(.subheadline))
-        .foregroundStyle(.primary)
-        .padding(16)
-        .background(Color(uiColor: .secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(processed ? Color.blue.opacity(0.4) : Color.clear, lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
+            }
+            .font(.system(.subheadline))
+            .foregroundStyle(.primary)
+            .padding(16)
+            .background(Color(uiColor: .secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(processed ? Color.blue.opacity(0.4) : Color.clear, lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
     }
 
     private var extractionOverlayMessage: String {
