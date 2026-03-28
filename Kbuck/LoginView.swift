@@ -10,6 +10,7 @@ struct LoginView: View {
     @State private var authError: String?
     @State private var acceptedTerms: Bool = false
     @State private var showTerms: Bool = false
+    @State private var hasOpenedTerms: Bool = false
     @AppStorage("hpdUserBanned") private var isUserBanned: Bool = false
 
     var body: some View {
@@ -81,15 +82,17 @@ struct LoginView: View {
                         } label: {
                             Image(systemName: acceptedTerms ? "checkmark.circle.fill" : "circle")
                                 .font(.title2)
-                                .foregroundStyle(acceptedTerms ? Color.accentColor : Color.secondary)
+                                .foregroundStyle(acceptedTerms ? Color.accentColor : (hasOpenedTerms ? Color.secondary : Color.secondary.opacity(0.4)))
                                 .contentTransition(.symbolEffect(.replace))
                         }
                         .buttonStyle(.plain)
+                        .disabled(!hasOpenedTerms)
 
                         HStack(spacing: 4) {
                             Text("I agree to the")
                                 .foregroundStyle(.secondary)
                             Button("Terms & Conditions") {
+                                hasOpenedTerms = true
                                 showTerms = true
                             }
                             .foregroundStyle(Color.accentColor)
@@ -183,6 +186,11 @@ struct LoginView: View {
 #endif
 
                 Spacer()
+
+                Text("Bubick Company LLC v\(Bundle.main.appVersion)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 16)
             }
         }
         .sheet(isPresented: $showTerms) {

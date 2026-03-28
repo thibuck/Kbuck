@@ -2525,7 +2525,7 @@ struct HPDView: View {
                         if let v = spvVIN, var info = supabaseService.odoByVIN[v] {
                             info.privateValue = price
                             supabaseService.setOdoInfo(info, forVIN: v)
-                            supabaseService.recordExtractionUsage(vin: v)
+                            Task { await supabaseService.incrementQuota() }
                             VINFailureTracker.shared.clearFailures(vin: v)
                             lastProcessedVIN = v
                         }

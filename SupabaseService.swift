@@ -9,6 +9,7 @@
 
 import Foundation
 import Combine
+import WebKit
 import Supabase
 
 // MARK: - Supabase Client (module-scoped singleton)
@@ -107,6 +108,35 @@ struct FavoriteRow: Codable {
     func clearOdoCache() {
         odoByVIN = [:]
         persistOdo()
+    }
+
+    /// Strictly local browser/network cache wipe.
+    /// Clears URLSession responses, all WKWebView persistent data (cookies, storage,
+    /// IndexedDB, service workers), and the temp directory.
+    /// DOES NOT touch user-saved data (odo readings, SPV values, favorites).
+    func clearAppCache() {
+        // 1. URLSession shared response cache
+        URLCache.shared.removeAllCachedResponses()
+
+        // 2. All WKWebView persistent data — critical for the hidden scraping WKWebView instances.
+        //    Passing Date(timeIntervalSince1970: 0) removes data for all time.
+        WKWebsiteDataStore.default().removeData(
+            ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
+            modifiedSince: Date(timeIntervalSince1970: 0),
+            completionHandler: {}
+        )
+
+        // 3. Temporary directory files (downloaded previews, PDFs, etc.)
+        let tmp = FileManager.default.temporaryDirectory
+        if let files = try? FileManager.default.contentsOfDirectory(
+            at: tmp,
+            includingPropertiesForKeys: nil,
+            options: .skipsHiddenFiles
+        ) {
+            for file in files { try? FileManager.default.removeItem(at: file) }
+        }
+
+        print("🧹 CACHE: Browser cache cleared (URLCache, WKWebView, tmp/) — user data untouched")
     }
 
     /// Wipes ALL user-specific state from memory and UserDefaults.
@@ -384,6 +414,29 @@ struct FavoriteRow: Codable {
     func recordExtractionUsage(vin: String) {
         Task(priority: .background) {
             _ = try? await supabase.rpc("record_data_extraction", params: ["target_vin": vin]).execute()
+        }
+    }
+
+    /// Increments the daily quota counter via the timezone-aware RPC.
+    /// Super Admins are exempt — this function returns immediately without touching the DB.
+    func incrementQuota() async {
+        guard let user = supabase.auth.currentUser else { return }
+
+        // Read role from UserDefaults (written at login by KbuckApp / LoginView)
+        let role = UserDefaults.standard.string(forKey: "userRole") ?? "user"
+        guard role != "super_admin" else {
+            print("🔵 QUOTA: super_admin — skipping increment_user_quota")
+            return
+        }
+
+        do {
+            try await supabase
+                .rpc("increment_user_quota", params: ["user_uuid": user.id.uuidString])
+                .execute()
+            print("🟢 QUOTA: increment_user_quota succeeded for uid=\(user.id)")
+            await fetchCurrentProfile()
+        } catch {
+            print("🔴 QUOTA: increment_user_quota failed: \(error)")
         }
     }
 

@@ -8,6 +8,9 @@ struct AdminUserStatus: Codable, Identifiable {
     let is_banned: Bool?
     let scrape_count_today: Int?
     let last_scrape_reset: String?
+    let total_fetches: Int?
+    let role: String?
+    let app_version: String?
 
     var displayTime: String {
         guard let raw = last_active else { return "Never" }
@@ -91,14 +94,31 @@ struct AdminUserDetailSheet: View {
     let onActionComplete: () -> Void
     @Environment(\.dismiss) var dismiss
 
+    // MARK: Confirmation alert state
+    @State private var isShowingConfirmAlert  = false
+    @State private var confirmTitle           = ""
+    @State private var confirmMessage         = ""
+    @State private var confirmIsDestructive   = true
+    @State private var confirmationAction: (() -> Void)? = nil
+
     private var isSelf: Bool { currentUserID == user.id }
+
+    private func schedule(title: String, message: String, destructive: Bool = true, action: @escaping () -> Void) {
+        confirmTitle         = title
+        confirmMessage       = message
+        confirmIsDestructive = destructive
+        confirmationAction   = action
+        isShowingConfirmAlert = true
+    }
 
     var body: some View {
         NavigationStack {
             Form {
+                // MARK: User Identity
                 Section(header: Text("User Identity")) {
                     LabeledContent("Email", value: user.email ?? "Unknown")
                     LabeledContent("Last Active", value: user.displayTime)
+                    LabeledContent("App Version", value: user.app_version ?? "N/A")
                     if user.is_banned == true {
                         Text("Account is currently BANNED")
                             .foregroundStyle(.red)
@@ -106,34 +126,66 @@ struct AdminUserDetailSheet: View {
                     }
                 }
 
-                Section(header: Text("Today's Quota Usage")) {
-                    let count = user.scrape_count_today ?? 0
-                    ProgressView(value: Double(count), total: 50.0) {
-                        Text("\(count) of 50 Extractions Used")
-                            .font(.subheadline)
+                // MARK: Quota / Role
+                if user.role == "super_admin" {
+                    Section(header: Text("Account Type")) {
+                        LabeledContent("Role", value: "Super Admin")
+                        LabeledContent("Quota", value: "Unlimited — exempt from daily limits")
                     }
-                    .progressViewStyle(.linear)
-                    .tint(count >= 45 ? .red : (count >= 30 ? .yellow : .green))
+                } else {
+                    Section(header: Text("Quota Usage")) {
+                        let count = user.scrape_count_today ?? 0
+                        ProgressView(value: Double(count), total: 50.0) {
+                            Text("Daily Usage: \(count) / 50 today")
+                                .font(.subheadline)
+                        }
+                        .progressViewStyle(.linear)
+                        .tint(count >= 45 ? .red : (count >= 30 ? .yellow : .green))
+
+                        LabeledContent("Lifetime Usage") {
+                            Text("\(user.total_fetches ?? 0) total lifetime fetches")
+                                .foregroundStyle(.secondary)
+                                .font(.subheadline)
+                        }
+                    }
                 }
 
+                // MARK: Admin Actions (not on own account)
                 if !isSelf {
                     Section(header: Text("Super Admin Actions")) {
-                        Button(role: .none) {
-                            Task {
-                                await supabaseService.resetUserLimits(userId: user.id)
-                                onActionComplete()
-                                dismiss()
+                        // Reset Quota — shows confirmation before executing
+                        Button {
+                            schedule(
+                                title: "Reset Daily Quota",
+                                message: "Reset \(user.email ?? "this user")'s daily fetch count back to 0?",
+                                destructive: false
+                            ) {
+                                Task {
+                                    await supabaseService.resetUserLimits(userId: user.id)
+                                    onActionComplete()
+                                    dismiss()
+                                }
                             }
                         } label: {
                             Label("Reset Daily Quota", systemImage: "arrow.counterclockwise")
-                                .foregroundStyle(.blue)
+                                .foregroundStyle(.primary)
                         }
 
-                        Button(role: user.is_banned == true ? .none : .destructive) {
-                            Task {
-                                await supabaseService.syncToggleBan(userId: user.id, isBanned: !(user.is_banned == true))
-                                onActionComplete()
-                                dismiss()
+                        // Ban / Unban — shows confirmation before executing
+                        Button {
+                            let currentlyBanned = user.is_banned == true
+                            schedule(
+                                title: currentlyBanned ? "Unban User" : "Ban User",
+                                message: currentlyBanned
+                                    ? "Restore access for \(user.email ?? "this user")?"
+                                    : "Block \(user.email ?? "this user") from accessing the app? This takes effect immediately.",
+                                destructive: !currentlyBanned
+                            ) {
+                                Task {
+                                    await supabaseService.syncToggleBan(userId: user.id, isBanned: !currentlyBanned)
+                                    onActionComplete()
+                                    dismiss()
+                                }
                             }
                         } label: {
                             Label(
@@ -151,6 +203,16 @@ struct AdminUserDetailSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
                 }
+            }
+            // Single unified confirmation alert for all admin actions
+            .alert(confirmTitle, isPresented: $isShowingConfirmAlert) {
+                Button("Cancel", role: .cancel) { confirmationAction = nil }
+                Button("Continue", role: confirmIsDestructive ? .destructive : .none) {
+                    confirmationAction?()
+                    confirmationAction = nil
+                }
+            } message: {
+                Text(confirmMessage)
             }
         }
     }
@@ -183,19 +245,29 @@ struct UserActivityDetailView: View {
                             HStack(spacing: 12) {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(user.email ?? "Unknown")
-                                        .font(.subheadline)
+                                        .font(.headline)
                                         .strikethrough(user.is_banned == true, color: .red)
                                         .foregroundStyle(.primary)
-                                    let count = user.scrape_count_today ?? 0
-                                    Text("\(count) / 50 extractions today")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                    if user.role == "super_admin" {
+                                        Text("Role: Super Admin")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    } else {
+                                        let count = user.scrape_count_today ?? 0
+                                        Text("Daily: \(count) / 50  ·  Lifetime: \(user.total_fetches ?? 0)")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
                                 }
                                 Spacer()
                                 if user.is_banned == true {
                                     Text("BANNED")
                                         .font(.caption.bold())
                                         .foregroundStyle(.red)
+                                } else if user.role == "super_admin" {
+                                    Text(user.displayTime)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
                                 } else {
                                     VStack(alignment: .trailing, spacing: 4) {
                                         let count = user.scrape_count_today ?? 0
@@ -241,7 +313,13 @@ struct UserActivityDetailView: View {
     private func fetch() async {
         isLoading = true
         do {
-            let users: [AdminUserStatus] = try await supabase.rpc("get_all_users_status").execute().value
+            // Explicit column list forces the RPC result set to include total_fetches
+            // and role even if the function pre-dates those columns.
+            let users: [AdminUserStatus] = try await supabase
+                .rpc("get_all_users_status")
+                .select("id, email, last_active, is_banned, scrape_count_today, last_scrape_reset, total_fetches, role, app_version")
+                .execute()
+                .value
             await MainActor.run { adminUsers = users }
         } catch {
             print("🔴 RPC Error fetching users: \(error)")
@@ -284,35 +362,24 @@ struct HPDSettingsView: View {
         return .green
     }
 
-    private var lastResetDate: Date? {
-        guard let raw = supabaseService.currentProfile?.last_scrape_reset else { return nil }
-        let clean = raw.replacingOccurrences(of: " ", with: "T")
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = iso.date(from: clean) { return d }
-        iso.formatOptions = [.withInternetDateTime]
-        if let d = iso.date(from: clean) { return d }
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "en_US_POSIX")
-        df.timeZone = TimeZone(secondsFromGMT: 0)
-        for fmt in ["yyyy-MM-dd'T'HH:mm:ss.SSSSSSZZZZZ", "yyyy-MM-dd'T'HH:mm:ss.SSSZZZZZ", "yyyy-MM-dd'T'HH:mm:ssZZZZZ"] {
-            df.dateFormat = fmt
-            if let d = df.date(from: clean) { return d }
-        }
-        return nil
-    }
-
+    /// Returns the time remaining until the next midnight in the America/Chicago timezone.
+    /// This matches the server-side RPC reset boundary exactly, regardless of the device's local timezone.
     private func resetsInMessage(now: Date) -> String {
-        guard let reset = lastResetDate else {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "America/Chicago")!
+        guard let midnight = cal.nextDate(
+            after: now,
+            matching: DateComponents(hour: 0, minute: 0, second: 0),
+            matchingPolicy: .nextTime
+        ) else {
             return currentCount == 0 ? "🟢 Full quota available" : "Reset time unknown"
         }
-        let nextReset = reset.addingTimeInterval(86400)
-        let remaining = nextReset.timeIntervalSince(now)
-        if remaining <= 0 { return "🟢 Quota recently reset" }
+        let remaining = midnight.timeIntervalSince(now)
+        guard remaining > 0 else { return "🟢 Quota recently reset" }
         let hours = Int(remaining) / 3600
         let mins  = (Int(remaining) % 3600) / 60
-        if hours == 0 { return "Resets in \(mins) min" }
-        return "Resets in \(hours) hr \(mins) min"
+        if hours == 0 { return "Resets in \(mins) min (CT)" }
+        return "Resets in \(hours) hr \(mins) min (CT)"
     }
 
     // MARK: - Body
@@ -456,8 +523,8 @@ struct HPDSettingsView: View {
 
                 // Cache
                 Section(
-                    header: Text("ODO / Date / SPV Cache"),
-                    footer: Text("This only clears the locally saved odometer, date, and Private Value data.")
+                    header: Text("Browser & Network Cache"),
+                    footer: Text("Clears URLSession responses, WKWebView data (cookies, storage), and temp files. Your saved odometer readings, SPV values, and favorites are not affected.")
                 ) {
                     Button(role: .destructive) {
                         showClearOdoAlert = true
@@ -465,13 +532,14 @@ struct HPDSettingsView: View {
                         Label("Clear Cache", systemImage: "trash")
                     }
                 }
-                .alert("Clear Cache", isPresented: $showClearOdoAlert) {
+                .alert("Clear Browser Cache", isPresented: $showClearOdoAlert) {
                     Button("Cancel", role: .cancel) {}
                     Button("Clear", role: .destructive) {
-                        supabaseService.clearOdoCache()
+                        supabaseService.clearAppCache()
+                        refreshTrigger += 1   // trigger a fresh HPD data fetch
                     }
                 } message: {
-                    Text("This will permanently delete saved odometers, dates, and SPV values. This action cannot be undone.")
+                    Text("This clears network responses and WKWebView data used by the scraping engine. Your saved odometer readings, SPV values, and favorites will not be deleted.")
                 }
 
                 // Sign Out
@@ -494,6 +562,19 @@ struct HPDSettingsView: View {
                     }
                 } message: {
                     Text("Are you sure you want to sign out?")
+                }
+
+                // App Version Footer
+                Section {
+                } footer: {
+                    HStack {
+                        Spacer()
+                        Text("Bubick Company LLC v\(Bundle.main.appVersion)")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        Spacer()
+                    }
+                    .padding(.top, 4)
                 }
             }
             .navigationTitle("Settings")

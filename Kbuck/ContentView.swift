@@ -52,10 +52,12 @@ extension View {
 // MARK: - Auth Router
 
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
+
     @State private var isAuthenticated = false
     @State private var isAuthReady     = false
 
-    // Persisted role — written here on sign-in, read in HPDSettingsView (and anywhere else).
+    // Persisted role — written here on sign-in, read everywhere else.
     // Defaults to "user" so no privileged UI is ever shown before the fetch resolves.
     @AppStorage("userRole") private var userRole: String = "user"
 
@@ -110,14 +112,19 @@ struct ContentView: View {
                 }
             }
         }
+        // Heartbeat: every time the app returns to the foreground, stamp last_active
+        // and the current app_version so the Admin dashboard always shows fresh data.
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active, isAuthenticated else { return }
+            heartbeat()
+        }
         .hideKeyboardOnTap()
     }
 
     // MARK: - Role fetch
 
-    /// Reads the current user's `role` from the `profiles` table.
-    /// RLS guarantees only the authenticated user's own row is returned,
-    /// so no `.eq` filter is required — `.single()` is sufficient.
+    /// Reads the current user's `role` from `profiles_kbuck`.
+    /// RLS guarantees only the authenticated user's own row is returned.
     private func fetchRole() {
         Task {
             do {
@@ -135,6 +142,28 @@ struct ContentView: View {
                 // Fall back to "user" — the trigger will have created the row by next launch.
                 userRole = "user"
                 print("🔴 RBAC: role fetch failed — defaulting to 'user': \(error.localizedDescription)")
+            }
+        }
+    }
+
+    // MARK: - Heartbeat
+
+    /// Fires on every foreground transition (.active scenePhase).
+    /// Updates last_active (→ accurate "Online" status in Admin dashboard) and
+    /// app_version (→ version column always reflects the currently installed build).
+    private func heartbeat() {
+        Task {
+            guard let uid = supabase.auth.currentUser?.id else { return }
+            let version = Bundle.main.appVersion
+            do {
+                try await supabase
+                    .from("profiles_kbuck")
+                    .update(["last_active": "now()", "app_version": version])
+                    .eq("id", value: uid)
+                    .execute()
+                print("🟢 HEARTBEAT: last_active + v\(version) recorded for uid=\(uid)")
+            } catch {
+                print("🔴 HEARTBEAT: update failed: \(error)")
             }
         }
     }
