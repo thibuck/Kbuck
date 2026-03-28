@@ -56,6 +56,8 @@ struct ContentView: View {
 
     @State private var isAuthenticated = false
     @State private var isAuthReady     = false
+    @State private var didBootstrapFavorites = false
+    @AppStorage("hpdUserBanned") private var isUserBanned: Bool = false
 
     // Persisted role — written here on sign-in, read everywhere else.
     // Defaults to "user" so no privileged UI is ever shown before the fetch resolves.
@@ -100,23 +102,35 @@ struct ContentView: View {
                 case .initialSession:
                     isAuthenticated = session != nil
                     isAuthReady     = true
-                    if session != nil { fetchRole() }
+                    if session != nil {
+                        if !didBootstrapFavorites {
+                            await supabaseService.syncFetchFavoritesFromSupabase()
+                            didBootstrapFavorites = true
+                        }
+                        fetchRole()
+                        runGlobalLifecycleSync()
+                    }
                 case .signedIn:
                     isAuthenticated = true
+                    if !didBootstrapFavorites {
+                        await supabaseService.syncFetchFavoritesFromSupabase()
+                        didBootstrapFavorites = true
+                    }
                     fetchRole()
+                    runGlobalLifecycleSync()
                 case .signedOut, .userDeleted:
                     isAuthenticated = false
+                    didBootstrapFavorites = false
+                    isUserBanned = false
                     userRole = "user"   // clear role so no stale admin access persists
                 default:
                     break
                 }
             }
         }
-        // Heartbeat: every time the app returns to the foreground, stamp last_active
-        // and the current app_version so the Admin dashboard always shows fresh data.
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active, isAuthenticated else { return }
-            heartbeat()
+            runGlobalLifecycleSync()
         }
         .hideKeyboardOnTap()
     }
@@ -136,7 +150,6 @@ struct ContentView: View {
                     .execute()
                     .value
                 userRole = row.role
-                print("🟢 RBAC: role fetched → \(row.role)")
             } catch {
                 // Profile row may not yet exist on first sign-in before the trigger fires.
                 // Fall back to "user" — the trigger will have created the row by next launch.
@@ -146,24 +159,16 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Heartbeat
-
-    /// Fires on every foreground transition (.active scenePhase).
-    /// Updates last_active (→ accurate "Online" status in Admin dashboard) and
-    /// app_version (→ version column always reflects the currently installed build).
-    private func heartbeat() {
+    // MARK: - Global Lifecycle Sync
+    private func runGlobalLifecycleSync() {
         Task {
-            guard let uid = supabase.auth.currentUser?.id else { return }
-            let version = Bundle.main.appVersion
-            do {
-                try await supabase
-                    .from("profiles_kbuck")
-                    .update(["last_active": "now()", "app_version": version])
-                    .eq("id", value: uid)
-                    .execute()
-                print("🟢 HEARTBEAT: last_active + v\(version) recorded for uid=\(uid)")
-            } catch {
-                print("🔴 HEARTBEAT: update failed: \(error)")
+            let banned = await supabaseService.pingActivityAndCheckBan()
+            isUserBanned = banned
+            if banned {
+                supabaseService.clearAllLocalState()
+                try? await supabase.auth.signOut()
+                isAuthenticated = false
+                userRole = "user"
             }
         }
     }

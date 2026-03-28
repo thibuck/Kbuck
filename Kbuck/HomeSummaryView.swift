@@ -24,15 +24,8 @@ struct HomeSummaryView: View {
     @Binding var targetLocationFilter: String?
 
     @AppStorage("hpdCachedEntries") private var hpdCachedEntriesData: Data = Data()
-
-    // MARK: - Raw entries
-
-    private var entries: [HPDEntry] {
-        guard !hpdCachedEntriesData.isEmpty,
-              let decoded = try? JSONDecoder().decode([HPDEntry].self, from: hpdCachedEntriesData)
-        else { return [] }
-        return decoded
-    }
+    @State private var cachedGroupedSummaries: [DateCard] = []
+    @State private var cachedActiveVehicleCount: Int = 0
 
     // MARK: - Collapse state
 
@@ -40,7 +33,7 @@ struct HomeSummaryView: View {
 
     // MARK: - Address normalisation (mirrors HPDView.sanitizedAddressForMaps + streetNumberKey)
 
-    private func normalizeAddress(_ raw: String) -> String {
+    private static func normalizeAddress(_ raw: String) -> String {
         var t = raw
             .replacingOccurrences(of: "*",        with: " ")
             .replacingOccurrences(of: "\u{00A0}", with: " ")
@@ -73,45 +66,9 @@ struct HomeSummaryView: View {
         return t
     }
 
-    private func streetKey(_ s: String) -> String {
+    private static func streetKey(_ s: String) -> String {
         s.components(separatedBy: CharacterSet.decimalDigits.inverted)
          .first { !$0.isEmpty } ?? s.uppercased()
-    }
-
-    // MARK: - Brand asset (mirrors HPDView.brandAssetName)
-
-    private func brandAssetName(for rawMake: String) -> String? {
-        let m = rawMake.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if m.isEmpty { return nil }
-        if m.contains("toyota")     || m.hasPrefix("toyo") { return "toyo" }
-        if m.contains("honda")      || m.hasPrefix("hond") { return "hond" }
-        if m.contains("chevrolet")  || m.contains("chevy") || m.hasPrefix("chev") { return "chev" }
-        if m.contains("nissan")     || m.hasPrefix("niss") { return "niss" }
-        if m.contains("dodge")      || m.hasPrefix("dodg") { return "dodg" }
-        if m.contains("bmw")                               { return "bmw"  }
-        if m.contains("ford")       || m.hasPrefix("ford") { return "ford" }
-        if m.contains("acura")      || m.hasPrefix("acur") { return "acur" }
-        if m.contains("tesla")      || m.hasPrefix("tesl") { return "tesl" }
-        if m.contains("kia")                               { return "kia"  }
-        if m.contains("ram")        || m.hasPrefix("ram")  { return "ram"  }
-        if m.contains("gmc")                               { return "gmc"  }
-        if m.contains("hyundai")    || m.hasPrefix("hyun") { return "hyun" }
-        if m.contains("volkswagen") || m.hasPrefix("volk") { return "volk" }
-        if m.contains("mercedes")   || m.hasPrefix("merz") { return "merz" }
-        if m.contains("mazda")      || m.hasPrefix("mazd") { return "mazd" }
-        if m.contains("buick")      || m.hasPrefix("buic") { return "buic" }
-        if m.contains("cadillac")   || m.hasPrefix("cadi") { return "cadi" }
-        if m.contains("isuzu")      || m.hasPrefix("isuz") { return "isuz" }
-        if m.contains("subaru")     || m.hasPrefix("suba") { return "suba" }
-        if m.contains("mitsubishi") || m.hasPrefix("mits") { return "mits" }
-        if m.contains("lexus")      || m.hasPrefix("lexu") { return "lexu" }
-        if m.contains("scion")      || m.hasPrefix("scio") { return "scio" }
-        if m.contains("chrysler")   || m.hasPrefix("chry") { return "chry" }
-        if m.contains("jeep")       || m.hasPrefix("jeep") { return "jeep" }
-        if m.contains("infiniti")   || m.hasPrefix("infi") { return "infi" }
-        if m.contains("pontiac")    || m.hasPrefix("pont") { return "pont" }
-        if m.contains("lincoln")    || m.hasPrefix("linc") { return "linc" }
-        return nil
     }
 
     // MARK: - Grouped summaries (Date-primary)
@@ -119,7 +76,7 @@ struct HomeSummaryView: View {
     // Single O(n) pass. Primary sort: chronological (soonest first).
     // Secondary sort: locations by vehicle count desc.
 
-    private var groupedByDate: [DateCard] {
+    private static func buildGroupedSummaries(from entries: [HPDEntry]) -> [DateCard] {
         let fmt: DateFormatter = {
             let f = DateFormatter()
             f.dateFormat = "MM/dd/yyyy"
@@ -169,11 +126,18 @@ struct HomeSummaryView: View {
             }
             .sorted { $0.dateObj < $1.dateObj }
     }
-
-    // MARK: - Active vehicle count (excludes past dates and invalid addresses)
-
-    private var activeVehicleCount: Int {
-        groupedByDate.reduce(0) { $0 + $1.locations.reduce(0) { $0 + $1.count } }
+    
+    private func recomputeSummaries() {
+        guard !hpdCachedEntriesData.isEmpty,
+              let decoded = try? JSONDecoder().decode([HPDEntry].self, from: hpdCachedEntriesData)
+        else {
+            cachedGroupedSummaries = []
+            cachedActiveVehicleCount = 0
+            return
+        }
+        let grouped = Self.buildGroupedSummaries(from: decoded)
+        cachedGroupedSummaries = grouped
+        cachedActiveVehicleCount = grouped.reduce(0) { $0 + $1.locations.reduce(0) { $0 + $1.count } }
     }
 
     // MARK: - Body
@@ -182,12 +146,12 @@ struct HomeSummaryView: View {
         NavigationStack {
             ZStack {
                 Color(UIColor.systemGroupedBackground).ignoresSafeArea()
-                if groupedByDate.isEmpty {
+                if cachedGroupedSummaries.isEmpty {
                     emptyState
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 16) {
-                            ForEach(groupedByDate) { card in
+                            ForEach(cachedGroupedSummaries) { card in
                                 dateCard(card)
                             }
                         }
@@ -203,12 +167,18 @@ struct HomeSummaryView: View {
                         Image(systemName: "chart.bar.xaxis")
                             .foregroundColor(.accentColor)
                             .font(.headline)
-                        Text("Dashboard (\(activeVehicleCount))")
+                        Text("Dashboard (\(cachedActiveVehicleCount))")
                             .font(.headline.bold())
                             .foregroundStyle(.primary)
                     }
                 }
             }
+        }
+        .task {
+            recomputeSummaries()
+        }
+        .onChange(of: hpdCachedEntriesData) { _, _ in
+            recomputeSummaries()
         }
     }
 

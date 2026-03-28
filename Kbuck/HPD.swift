@@ -85,6 +85,7 @@ struct MileageWebView: UIViewRepresentable {
         )
         config.userContentController.addUserScript(suppressKeyboardScript)
         let webView = WKWebView(frame: .zero, configuration: config)
+        context.coordinator.webView = webView
         config.userContentController.add(context.coordinator, name: context.coordinator.captchaMessageChannel)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
@@ -108,6 +109,7 @@ struct MileageWebView: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        weak var webView: WKWebView?
         private var vin: String
         private var isActive: Bool
         private var url: URL
@@ -180,7 +182,8 @@ struct MileageWebView: UIViewRepresentable {
         }
 
         func syncLoadingState(for webView: WKWebView) {
-            if !isMessageHandlerAttached {
+            self.webView = webView
+            if isActive && !isMessageHandlerAttached {
                 webView.configuration.userContentController.add(self, name: captchaMessageChannel)
                 isMessageHandlerAttached = true
             }
@@ -238,6 +241,12 @@ struct MileageWebView: UIViewRepresentable {
 
         deinit {
             cancelExtractionTimeout()
+            if isMessageHandlerAttached {
+                webView?.configuration.userContentController.removeScriptMessageHandler(forName: captchaMessageChannel)
+                isMessageHandlerAttached = false
+            }
+            webView?.navigationDelegate = nil
+            webView?.stopLoading()
         }
 
         private func startExtractionTimeout(seconds: TimeInterval = 12) {
@@ -271,7 +280,6 @@ struct MileageWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            print("🟢 [MileageWebView] Finished loading: \(webView.url?.absoluteString ?? "nil")")
             guard isActive else { return }
             // Attempt to auto-fill VIN field by common heuristics
             let escapedVIN = vin.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
@@ -569,27 +577,22 @@ struct MileageWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            print("🔴 [MileageWebView] Failed load: \(error.localizedDescription)")
             guard isActive else { return }
             if isNavigationCancelled(error) {
-                print("⚪️ [MileageWebView] Ignoring NSURLErrorCancelled (-999)")
                 return
             }
             handleFailure("Extraction Failed: Unable to load mileage report page.")
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            print("🔴 [MileageWebView] Failed provisional load: \(error.localizedDescription)")
             guard isActive else { return }
             if isNavigationCancelled(error) {
-                print("⚪️ [MileageWebView] Ignoring NSURLErrorCancelled (-999)")
                 return
             }
             handleFailure("Extraction Failed: Unable to load mileage report page.")
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-            print("🟡 [MileageWebView] Started loading: \(webView.url?.absoluteString ?? "nil")")
         }
 
         private func isNavigationCancelled(_ error: Error) -> Bool {
@@ -1050,18 +1053,25 @@ final class SPVBackgroundRunner: NSObject, WKNavigationDelegate {
     private let onPrice: (String) -> Void
     private var didSubmit = false
     private var didExtract = false
-    private var webView: WKWebView!
+    private var webView: WKWebView?
+    private var timeoutWorkItem: DispatchWorkItem?
     init(vin: String, mileage: String, onPrice: @escaping (String) -> Void) {
         self.vin = vin; self.mileage = mileage; self.onPrice = onPrice
         super.init()
         let config = WKWebViewConfiguration()
         config.defaultWebpagePreferences.allowsContentJavaScript = true
-        self.webView = WKWebView(frame: .zero, configuration: config)
-        self.webView.navigationDelegate = self
+        let wk = WKWebView(frame: .zero, configuration: config)
+        wk.navigationDelegate = self
+        self.webView = wk
     }
     func start() {
         guard let url = URL(string: "https://tools.txdmv.gov/tools/SPV/spv_lookup.php") else { return }
-        webView.load(URLRequest(url: url))
+        scheduleTimeout()
+        webView?.load(URLRequest(url: url))
+    }
+    deinit {
+        cancelTimeout()
+        cleanupWebView()
     }
     // --- Sanitization helpers ---
     private func sanitizeVIN(_ s: String) -> String {
@@ -1138,9 +1148,48 @@ final class SPVBackgroundRunner: NSObject, WKNavigationDelegate {
         webView.evaluateJavaScript(jsExtract) { result, _ in
             if let price = result as? String, !price.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 self.didExtract = true
-                self.onPrice(price)
+                self.finishWithPrice(price)
             }
         }
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        finishWithoutPrice()
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        finishWithoutPrice()
+    }
+
+    private func scheduleTimeout(seconds: TimeInterval = 15) {
+        cancelTimeout()
+        let work = DispatchWorkItem { [weak self] in
+            self?.finishWithoutPrice()
+        }
+        timeoutWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
+    }
+
+    private func cancelTimeout() {
+        timeoutWorkItem?.cancel()
+        timeoutWorkItem = nil
+    }
+
+    private func cleanupWebView() {
+        webView?.stopLoading()
+        webView?.navigationDelegate = nil
+        webView = nil
+    }
+
+    private func finishWithPrice(_ price: String) {
+        cancelTimeout()
+        cleanupWebView()
+        onPrice(price)
+    }
+
+    private func finishWithoutPrice() {
+        cancelTimeout()
+        cleanupWebView()
     }
 }
 
@@ -1336,7 +1385,6 @@ private extension String {
 struct HPDView: View {
     var favoritesOnly: Bool
     @Binding var externalLocationFilter: String?
-    @Environment(\.scenePhase) private var scenePhase
 
     init(favoritesOnly: Bool = false, externalLocationFilter: Binding<String?> = .constant(nil)) {
         self.favoritesOnly = favoritesOnly
@@ -1358,7 +1406,6 @@ struct HPDView: View {
     @AppStorage("hpdManualURLEnabled") private var manualURLModeEnabled: Bool = false
     @AppStorage("hpdManualURLInput")   private var hpdManualURLInput: String = ""
     @AppStorage("hpdRefreshTrigger")   private var hpdRefreshTrigger: Int = 0
-    @AppStorage("hpdUserBanned") private var isUserBanned: Bool = false
     @State private var isLoading: Bool = false
     @State private var errorMessage: String? = nil
     @State private var entries: [HPDEntry] = []
@@ -1371,6 +1418,11 @@ struct HPDView: View {
     @AppStorage("hpdLastFetchTS") private var hpdLastFetchTS: Double = 0
     @AppStorage("hpdHadLastError") private var hpdHadLastError: Bool = false
     @AppStorage("selectedLocationFiltersData") private var selectedLocationFiltersData: Data = Data()
+    @State private var decodedLocationFilters: Set<String> = []
+    @State private var cachedFilteredEntries: [HPDEntry] = []
+    @State private var cachedFilteredCount: Int = 0
+    @State private var cachedGroupedByDate: [(String, [HPDEntry])] = []
+    @State private var cachedGroupedByLocationForFavorites: [(location: String, dates: [(date: String, vehicles: [HPDEntry])])] = []
     @State private var showLocationFilterSheet: Bool = false
     @State private var isUserNavigatingFromHeader: Bool = false
     @State private var showFilter: Bool = false
@@ -1440,8 +1492,11 @@ struct HPDView: View {
     // MARK: - Multi-select location filter (AppStorage-backed Set<String>)
 
     private var selectedLocationFilters: Set<String> {
-        get { (try? JSONDecoder().decode(Set<String>.self, from: selectedLocationFiltersData)) ?? [] }
-        nonmutating set { selectedLocationFiltersData = (try? JSONEncoder().encode(newValue)) ?? Data() }
+        get { decodedLocationFilters }
+        nonmutating set {
+            decodedLocationFilters = newValue
+            selectedLocationFiltersData = (try? JSONEncoder().encode(newValue)) ?? Data()
+        }
     }
 
     private var locationFilterLabel: String {
@@ -1572,44 +1627,6 @@ struct HPDView: View {
         func empty(_ s: String?) -> Bool { return (s ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         return empty(e.make) && empty(e.model) && empty(e.year)
     }
-    private func brandAssetName(for rawMake: String) -> String? {
-        let m = rawMake.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if m.isEmpty { return nil }
-        if m.contains("toyota") || m.hasPrefix("toyo") { return "toyo" }
-        if m.contains("honda") || m.hasPrefix("hond") { return "hond" }
-        if m.contains("chevrolet") || m.contains("chevy") || m.hasPrefix("chev") { return "chev" }
-        if m.contains("nissan") || m.hasPrefix("niss") { return "niss" }
-        if m.contains("dodge") || m.hasPrefix("dodg") { return "dodg" }
-        if m.contains("bmw") || m.hasPrefix("bmw") { return "bmw" }
-        if m.contains("ford") || m.hasPrefix("ford") { return "ford" }
-        if m.contains("accura") || m.hasPrefix("acur") { return "acur" }
-        if m.contains("tesla") || m.hasPrefix("tesl") { return "tesl" }
-        if m.contains("kia") || m.hasPrefix("kia") { return "kia" }
-        if m.contains("ram") || m.hasPrefix("ram") { return "ram" }
-        if m.contains("gmc") || m.hasPrefix("gmc") { return "gmc" }
-        if m.contains("hyundai") || m.hasPrefix("hyun") { return "hyun" }
-        if m.contains("volkswagen") || m.hasPrefix("volk") { return "volk" }
-        if m.contains("volkswagen") || m.hasPrefix("volk") { return "volk" }
-        if m.contains("mercedes") || m.hasPrefix("merz") { return "merz" }
-        if m.contains("mazda") || m.hasPrefix("mazd") { return "mazd" }
-        if m.contains("buick") || m.hasPrefix("buic") { return "buic" }
-        if m.contains("cadillac") || m.hasPrefix("cadi") { return "cadi" }
-        if m.contains("isuzu") || m.hasPrefix("isuz") { return "isuz" }
-        if m.contains("subaru") || m.hasPrefix("suba") { return "suba" }
-        if m.contains("mitsubishi") || m.hasPrefix("mits") { return "mits" }
-        if m.contains("lexus") || m.hasPrefix("lexu") { return "lexu" }
-        if m.contains("scion") || m.hasPrefix("scio") { return "scio" }
-        if m.contains("chrysler") || m.hasPrefix("chry") { return "chry" }
-        if m.contains("jeep") || m.hasPrefix("jeep") { return "jeep" }
-        if m.contains("infiniti") || m.hasPrefix("infi") { return "infi" }
-        if m.contains("pontiac") || m.hasPrefix("pont") { return "pont" }
-        if m.contains("lincoln") || m.hasPrefix("linc") { return "linc" }
-        if m.contains("tesla") || m.hasPrefix("tesl") { return "tesl" }
-
-        return nil
-    }
-
-    
     private func formatOdoK(_ raw: String) -> String {
         // Keep only digits, then round to nearest thousand and append 'k'
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2053,7 +2070,7 @@ struct HPDView: View {
 
     // Single reactive token — changes whenever any filter or sort option changes.
     private var activeFilterHash: String {
-        "\(filterOption.rawValue)|\(sortKey.rawValue)|\(selectedLocationFilters.sorted().joined(separator: ","))|\(sortAscending)|\(selectedYear.map(String.init) ?? "All")|\(selectedMake)|\(selectedModel)|\(maxPrice)"
+        "\(filterOption.rawValue)|\(sortKey.rawValue)|\(decodedLocationFilters.sorted().joined(separator: ","))|\(sortAscending)|\(selectedYear.map(String.init) ?? "All")|\(selectedMake)|\(selectedModel)|\(maxPrice)"
     }
 
     @ViewBuilder private func sectionRows(for items: [HPDEntry]) -> some View {
@@ -2161,7 +2178,7 @@ struct HPDView: View {
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
 
-            if filteredEntries().isEmpty && !isLoading {
+            if cachedFilteredEntries.isEmpty && !isLoading {
                 ContentUnavailableView {
                     Label(
                         favoritesOnly ? "No Favorites Yet" : "No Vehicles Found",
@@ -2174,7 +2191,7 @@ struct HPDView: View {
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
             } else {
-                ForEach(groupedByDate(), id: \.0) { dateKey, items in
+                ForEach(cachedGroupedByDate, id: \.0) { dateKey, items in
                     let isCollapsed = collapsedDates.contains(dateKey)
                     Section(header: sectionHeader(for: dateKey, displayDate: dateKey.toAuctionRelativeDay(), count: items.count, collapsed: isCollapsed) {
                         if isCollapsed { collapsedDates.remove(dateKey) } else { collapsedDates.insert(dateKey) }
@@ -2188,7 +2205,7 @@ struct HPDView: View {
         }
         .listStyle(.plain)
         .listSectionSpacing(.custom(0))
-        .navigationTitle("HPD AUCTION (\(filteredEntries().count))")
+        .navigationTitle("HPD AUCTION (\(cachedFilteredCount))")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable {
             await supabaseService.syncFetchFavoritesFromSupabase()
@@ -2234,7 +2251,7 @@ struct HPDView: View {
                     }
                 }
 
-                if filteredEntries().isEmpty && !isLoading {
+                if cachedFilteredEntries.isEmpty && !isLoading {
                     ContentUnavailableView {
                         Label("No Favorites Yet", systemImage: "star.slash")
                     } description: {
@@ -2244,7 +2261,7 @@ struct HPDView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 16) {
-                            ForEach(groupedByLocationForFavorites(), id: \.location) { group in
+                            ForEach(cachedGroupedByLocationForFavorites, id: \.location) { group in
                                 VStack(alignment: .leading, spacing: 12) {
                                     DisclosureGroup(
                                         isExpanded: Binding(
@@ -2314,7 +2331,7 @@ struct HPDView: View {
                 }
             }
         }
-        .navigationTitle("FAVORITES (\(filteredEntries().count))")
+        .navigationTitle("FAVORITES (\(cachedFilteredCount))")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable {
             await supabaseService.syncFetchFavoritesFromSupabase()
@@ -2368,19 +2385,6 @@ struct HPDView: View {
         }
     }
 
-    private func executeHeartbeat() {
-        Task {
-            let banned = await supabaseService.pingActivityAndCheckBan()
-            if banned {
-                isUserBanned = true
-                supabaseService.clearAllLocalState()
-                try? await supabase.auth.signOut()
-            } else {
-                isUserBanned = false
-            }
-        }
-    }
-
     @ViewBuilder private var mainContent: some View {
         VStack(spacing: 0) {
             // 1. Fixed header inside mainContent
@@ -2403,6 +2407,9 @@ struct HPDView: View {
             vehicleList
         }
         .onAppear {
+            if decodedLocationFilters.isEmpty, !selectedLocationFiltersData.isEmpty {
+                decodedLocationFilters = (try? JSONDecoder().decode(Set<String>.self, from: selectedLocationFiltersData)) ?? []
+            }
             lastProcessingVIN = nil
             lastProcessedVIN = nil
             extractionState = .idle
@@ -2421,10 +2428,10 @@ struct HPDView: View {
                     showWelcomeSheet = true
                 }
             }
+            recomputeFilteredEntries()
         }
         .task {
-            executeHeartbeat()
-            await supabaseService.syncFetchFavoritesFromSupabase()
+            recomputeFilteredEntries()
         }
         .sheet(isPresented: $showFilter) {
             HPDFilterSheet(
@@ -2441,15 +2448,30 @@ struct HPDView: View {
         }
         .onChange(of: searchText) { _, _ in
             collapsedDates.removeAll(); expandedLocationIDs.removeAll()
+            recomputeFilteredEntries()
         }
         .onChange(of: activeFilterHash) { _, _ in
             collapsedDates.removeAll(); expandedLocationIDs.removeAll()
+            recomputeFilteredEntries()
         }
         .onChange(of: hpdRefreshTrigger) { _, _ in
             autoFetch(force: true)
         }
-        .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .active { executeHeartbeat() }
+        .onChange(of: entries) { _, _ in
+            recomputeFilteredEntries()
+        }
+        .onChange(of: externalLocationFilter) { _, _ in
+            recomputeFilteredEntries()
+        }
+        .onChange(of: selectedLocationFiltersData) { _, newData in
+            decodedLocationFilters = (try? JSONDecoder().decode(Set<String>.self, from: newData)) ?? []
+            recomputeFilteredEntries()
+        }
+        .onChange(of: supabaseService.favorites) { _, _ in
+            recomputeFilteredEntries()
+        }
+        .onChange(of: supabaseService.odoByVIN) { _, _ in
+            recomputeFilteredEntries()
         }
     }
 
@@ -2510,10 +2532,11 @@ struct HPDView: View {
                 .allowsHitTesting(extractionState != .waitingForCaptcha)
             }
 
-            if let spvURL = URL(string: "https://tools.txdmv.gov/tools/SPV/spv_lookup.php") {
+            if extractionState == .fetchingPrice,
+               let spvURL = URL(string: "https://tools.txdmv.gov/tools/SPV/spv_lookup.php") {
                 SPVWebView(
                     url: spvURL,
-                    isActive: extractionState == .fetchingPrice,
+                    isActive: true,
                     vin: spvVIN ?? "",
                     mileage: spvOdo ?? "",
                     cancelToken: extractionCancelToken,
@@ -2536,17 +2559,16 @@ struct HPDView: View {
                         extractionState = .idle
                     }
                 }
-                .frame(height: 500)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                .opacity(0)
+                .frame(width: 0, height: 0)
                 .zIndex(3)
                 .allowsHitTesting(false)
             }
 
-            if let mileageURL = URL(string: "https://www.mytxcar.org/TXCar_Net/SecurityCheck.aspx") {
+            if (extractionState == .fetchingOdometer || extractionState == .waitingForCaptcha),
+               let mileageURL = URL(string: "https://www.mytxcar.org/TXCar_Net/SecurityCheck.aspx") {
                 MileageWebView(
                     url: mileageURL,
-                    isActive: extractionState == .fetchingOdometer || extractionState == .waitingForCaptcha,
+                    isActive: true,
                     vin: mileageVIN ?? "",
                     cancelToken: extractionCancelToken,
                     forceStartToken: mileageForceStartToken,
@@ -2574,10 +2596,6 @@ struct HPDView: View {
                         }
                     }
                 )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .overlay(alignment: .center) {
-                    EmptyView()
-                }
                 .frame(height: extractionState == .waitingForCaptcha ? 500 : 0)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -2911,11 +2929,18 @@ struct HPDView: View {
         }
     }
 
-    private func groupedByDate() -> [(String, [HPDEntry])] {
+    private func recomputeFilteredEntries() {
+        let filtered = filteredEntries()
+        cachedFilteredEntries = filtered
+        cachedFilteredCount = filtered.count
+        cachedGroupedByDate = groupedByDate(from: filtered)
+        cachedGroupedByLocationForFavorites = groupedByLocationForFavorites(from: filtered)
+    }
+
+    private func groupedByDate(from base: [HPDEntry]) -> [(String, [HPDEntry])] {
         let df = DateFormatter()
         df.locale = Locale(identifier: "en_US_POSIX")
         df.dateFormat = "MM/dd/yyyy"
-        let base = filteredEntries()
         let groups = Dictionary(grouping: base, by: { $0.dateScheduled })
 
         // Schwartzian transform: parse each key string exactly once, then sort by the cached Date
@@ -2972,12 +2997,11 @@ struct HPDView: View {
 
     // MARK: - Favorites: Location-primary grouping (alphabetical locations → chronological dates → odometer desc)
 
-    private func groupedByLocationForFavorites() -> [(location: String, dates: [(date: String, vehicles: [HPDEntry])])] {
+    private func groupedByLocationForFavorites(from base: [HPDEntry]) -> [(location: String, dates: [(date: String, vehicles: [HPDEntry])])] {
         let df = DateFormatter()
         df.locale = Locale(identifier: "en_US_POSIX")
         df.dateFormat = "MM/dd/yyyy"
 
-        let base = filteredEntries()
         let byLocation = Dictionary(grouping: base) { e -> String in
             let addr = sanitizedAddressForMaps(e.lotAddress)
             return addr.isEmpty ? e.lotName.trimmingCharacters(in: .whitespacesAndNewlines) : addr
@@ -3010,12 +3034,7 @@ struct HPDView: View {
     // MARK: - Date helpers for coloring section headers
     private func compareDateToToday(_ dateStr: String) -> Int? {
         // Returns: -1 (past), 0 (today), 1 (future)
-        let df = DateFormatter()
-        df.calendar = Calendar(identifier: .gregorian)
-        df.locale = Locale(identifier: "en_US_POSIX")
-        df.timeZone = TimeZone.current
-        df.dateFormat = "MM/dd/yyyy"
-        guard let d = df.date(from: dateStr.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
+        guard let d = Kbuck.parseAuctionDate(from: dateStr.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
         let dd = cal.startOfDay(for: d)

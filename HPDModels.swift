@@ -152,3 +152,38 @@ func formatPrivateValueForDisplay(_ s: String) -> String {
     nf.maximumFractionDigits = 0
     return nf.string(from: NSNumber(value: val)) ?? t
 }
+
+/// Shared brand-to-asset mapper used by HPD and Dashboard views.
+func brandAssetName(for rawMake: String) -> String? {
+    let m = rawMake.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if m.isEmpty { return nil }
+    if m.contains("toyota")     || m.hasPrefix("toyo") { return "toyo" }
+    if m.contains("honda")      || m.hasPrefix("hond") { return "hond" }
+    if m.contains("chevrolet")  || m.contains("chevy") || m.hasPrefix("chev") { return "chev" }
+    if m.contains("nissan")     || m.hasPrefix("niss") { return "niss" }
+    if m.contains("dodge")      || m.hasPrefix("dodg") { return "dodg" }
+    if m.contains("bmw")                               { return "bmw"  }
+    if m.contains("ford")       || m.hasPrefix("ford") { return "ford" }
+    if m.contains("acura")      || m.hasPrefix("acur") { return "acur" }
+    if m.contains("tesla")      || m.hasPrefix("tesl") { return "tesl" }
+    if m.contains("kia")                               { return "kia"  }
+    if m.contains("ram")        || m.hasPrefix("ram")  { return "ram"  }
+    if m.contains("gmc")                               { return "gmc"  }
+    if m.contains("hyundai")    || m.hasPrefix("hyun") { return "hyun" }
+    if m.contains("volkswagen") || m.hasPrefix("volk") { return "volk" }
+    if m.contains("mercedes")   || m.hasPrefix("merz") { return "merz" }
+    if m.contains("mazda")      || m.hasPrefix("mazd") { return "mazd" }
+    if m.contains("buick")      || m.hasPrefix("buic") { return "buic" }
+    if m.contains("cadillac")   || m.hasPrefix("cadi") { return "cadi" }
+    if m.contains("isuzu")      || m.hasPrefix("isuz") { return "isuz" }
+    if m.contains("subaru")     || m.hasPrefix("suba") { return "suba" }
+    if m.contains("mitsubishi") || m.hasPrefix("mits") { return "mits" }
+    if m.contains("lexus")      || m.hasPrefix("lexu") { return "lexu" }
+    if m.contains("scion")      || m.hasPrefix("scio") { return "scio" }
+    if m.contains("chrysler")   || m.hasPrefix("chry") { return "chry" }
+    if m.contains("jeep")       || m.hasPrefix("jeep") { return "jeep" }
+    if m.contains("infiniti")   || m.hasPrefix("infi") { return "infi" }
+    if m.contains("pontiac")    || m.hasPrefix("pont") { return "pont" }
+    if m.contains("lincoln")    || m.hasPrefix("linc") { return "linc" }
+    return nil
+}

@@ -160,7 +160,6 @@ struct FavoriteRow: Codable {
             return
         }
 
-        print("🔵 SUPABASE: syncFetchFavoritesFromSupabase — starting fetch for uid=\(uid)…")
         do {
             let rows: [FavoriteRow] = try await supabase
                 .from("favorites_kbuck")
@@ -168,8 +167,6 @@ struct FavoriteRow: Codable {
                 .eq("user_id", value: uid.uuidString)   // explicit filter + RLS = belt-and-suspenders
                 .execute()
                 .value
-
-            print("🟢 SUPABASE SUCCESS: syncFetchFavoritesFromSupabase — received \(rows.count) row(s)")
 
             var newFavs: Set<String> = []
             for row in rows {
@@ -199,17 +196,7 @@ struct FavoriteRow: Codable {
     /// from HPDView so vehicle metadata can be included in each row.
     func syncPushFavoritesToSupabase(_ vins: [String], entries: [HPDEntry]) async {
         let uid = currentUserID
-        print("🔵 SUPABASE: syncPushFavoritesToSupabase — pushing \(vins.count) VIN(s)…")
         do {
-            // Delete every existing row first
-            try await supabase
-                .from("favorites_kbuck")
-                .delete()
-                .neq("vin", value: "")
-                .execute()
-
-            print("🟡 SUPABASE INFO: syncPushFavoritesToSupabase — cleared existing rows")
-
             var rows: [FavoriteRow] = []
             for v in vins {
                 let key  = normalizeVIN(v)
@@ -228,10 +215,8 @@ struct FavoriteRow: Codable {
             }
 
             if !rows.isEmpty {
-                try await supabase.from("favorites_kbuck").insert(rows).execute()
-                print("🟢 SUPABASE SUCCESS: syncPushFavoritesToSupabase — inserted \(rows.count) row(s)")
+                try await supabase.from("favorites_kbuck").upsert(rows).execute()
             } else {
-                print("🟡 SUPABASE INFO: syncPushFavoritesToSupabase — nothing to push (empty list)")
             }
 
         } catch {
@@ -246,7 +231,6 @@ struct FavoriteRow: Codable {
     func syncAddFavorite(_ vin: String) {
         let clean = normalizeVIN(vin)
         let uid   = currentUserID   // capture sync before entering Task
-        print("🔵 SUPABASE: syncAddFavorite — VIN=\(clean)")
         Task {
             do {
                 let row = FavoriteRow(user_id: uid, vin: clean)
@@ -254,8 +238,8 @@ struct FavoriteRow: Codable {
                     .from("favorites_kbuck")
                     .upsert(row)
                     .execute()
-                print("🟢 SUPABASE SUCCESS: syncAddFavorite — VIN=\(clean) upserted")
-                await syncFetchFavoritesFromSupabase()
+                favorites.insert(clean)
+                persistFavorites()
             } catch {
                 print("🔴 SUPABASE ERROR in syncAddFavorite (VIN=\(clean)): \(error.localizedDescription)")
                 print("🔴 Full error details: \(error)")
@@ -268,16 +252,25 @@ struct FavoriteRow: Codable {
     /// Deletes a single VIN row from `favorites`.
     func syncRemoveFavorite(_ vin: String) {
         let clean = normalizeVIN(vin)
-        print("🔵 SUPABASE: syncRemoveFavorite — VIN=\(clean)")
+        let uid = currentUserID
         Task {
             do {
-                try await supabase
-                    .from("favorites_kbuck")
-                    .delete()
-                    .eq("vin", value: clean)
-                    .execute()
-                print("🟢 SUPABASE SUCCESS: syncRemoveFavorite — VIN=\(clean) deleted")
-                await syncFetchFavoritesFromSupabase()
+                if let uid {
+                    try await supabase
+                        .from("favorites_kbuck")
+                        .delete()
+                        .eq("vin", value: clean)
+                        .eq("user_id", value: uid.uuidString)
+                        .execute()
+                } else {
+                    try await supabase
+                        .from("favorites_kbuck")
+                        .delete()
+                        .eq("vin", value: clean)
+                        .execute()
+                }
+                favorites.remove(clean)
+                persistFavorites()
             } catch {
                 print("🔴 SUPABASE ERROR in syncRemoveFavorite (VIN=\(clean)): \(error.localizedDescription)")
                 print("🔴 Full error details: \(error)")
@@ -299,8 +292,6 @@ struct FavoriteRow: Codable {
                     .eq("user_id", value: uid.uuidString)
                     .in("vin", values: expiredArray)
                     .execute()
-                print("🟢 SUPABASE SUCCESS: Purged \\(expiredVINs.count) expired favorites.")
-
                 await MainActor.run {
                     self.favorites.subtract(expiredVINs)
                     for vin in expiredVINs { self.odoByVIN.removeValue(forKey: vin) }
@@ -320,7 +311,6 @@ struct FavoriteRow: Codable {
             do {
                 let log = LegalAgreementLog(user_id: uid, vin: cleanVIN, action: "ACCEPTED_FETCH_TERMS")
                 try await supabase.from("legal_agreements_log").insert(log).execute()
-                print("🟢 SUPABASE SUCCESS: Legal agreement logged for VIN=\(cleanVIN)")
             } catch {
                 print("🔴 SUPABASE ERROR logging agreement: \(error.localizedDescription)")
             }
@@ -363,14 +353,12 @@ struct FavoriteRow: Codable {
             test_date:     info?.testDate,
             private_value: info?.privateValue
         )
-        print("🔵 SUPABASE: syncUpsertFavorite — VIN=\(vin) (\(normalizedYear(e.year)) \(e.make) \(e.model))")
         Task {
             do {
                 try await supabase
                     .from("favorites_kbuck")
                     .upsert(row)
                     .execute()
-                print("🟢 SUPABASE SUCCESS: syncUpsertFavorite — VIN=\(vin) upserted with full detail")
                 await syncFetchFavoritesFromSupabase()
             } catch {
                 print("🔴 SUPABASE ERROR in syncUpsertFavorite (VIN=\(vin)): \(error.localizedDescription)")
@@ -433,7 +421,6 @@ struct FavoriteRow: Codable {
             try await supabase
                 .rpc("increment_user_quota", params: ["user_uuid": user.id.uuidString])
                 .execute()
-            print("🟢 QUOTA: increment_user_quota succeeded for uid=\(user.id)")
             await fetchCurrentProfile()
         } catch {
             print("🔴 QUOTA: increment_user_quota failed: \(error)")
