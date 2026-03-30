@@ -92,7 +92,7 @@ struct FilteredAuctionListView: View {
             } else {
                 List {
                     ForEach(displayedVehicles) { entry in
-                        VehicleCardView(entry: entry, showAddress: false, initiallyExpanded: true)
+                        VehicleCardView(entry: entry, showAddress: false, showQuickInventory: false, initiallyExpanded: true)
                             .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)

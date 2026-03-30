@@ -79,7 +79,7 @@ struct MileageWebView: UIViewRepresentable {
     let onWaitingForCaptcha: () -> Void
     let onFetchingOdometer: () -> Void
     let onError: (String) -> Void
-    let onExtract: (String, String) -> Void
+    let onExtract: (String, String, String?) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -138,7 +138,7 @@ struct MileageWebView: UIViewRepresentable {
         private var onWaitingForCaptcha: () -> Void
         private var onFetchingOdometer: () -> Void
         private var onError: (String) -> Void
-        private var onExtract: (String, String) -> Void
+        private var onExtract: (String, String, String?) -> Void
         private var hasLoaded = false
         private var shouldForceStop = false
         private var shouldForceFreshLoad = false
@@ -156,7 +156,7 @@ struct MileageWebView: UIViewRepresentable {
             onWaitingForCaptcha: @escaping () -> Void,
             onFetchingOdometer: @escaping () -> Void,
             onError: @escaping (String) -> Void,
-            onExtract: @escaping (String, String) -> Void
+            onExtract: @escaping (String, String, String?) -> Void
         ) {
             self.vin = vin
             self.isActive = isActive
@@ -178,7 +178,7 @@ struct MileageWebView: UIViewRepresentable {
             onWaitingForCaptcha: @escaping () -> Void,
             onFetchingOdometer: @escaping () -> Void,
             onError: @escaping (String) -> Void,
-            onExtract: @escaping (String, String) -> Void
+            onExtract: @escaping (String, String, String?) -> Void
         ) {
             if self.cancelToken != cancelToken {
                 self.cancelToken = cancelToken
@@ -577,7 +577,11 @@ struct MileageWebView: UIViewRepresentable {
                     // Backward compatibility: some pages still use "Test Date"
                     if (!date) { date = findExact('Test Date'); }
 
-                    return { odo: odo, date: date };
+                    // Full model name (strictly additive). If missing, return null.
+                    var realModel = findExact('Model');
+                    if (!realModel) { realModel = null; }
+
+                    return { odo: odo, date: date, realModel: realModel };
                 })();
                 """
                 webView.evaluateJavaScript(extractJS) { result, _ in
@@ -586,8 +590,9 @@ struct MileageWebView: UIViewRepresentable {
                        let date = dict["date"] as? String,
                        !odo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                        !date.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        let realModel = (dict["realModel"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
                         self.cancelExtractionTimeout()
-                        self.onExtract(odo, date)
+                        self.onExtract(odo, date, (realModel?.isEmpty == false) ? realModel : nil)
                     } else {
                         self.handleFailure("Extraction Failed: Could not retrieve mileage from the report.")
                     }
@@ -1443,13 +1448,13 @@ struct HPDView: View {
     @AppStorage("hpdCachedEntries") private var hpdCachedEntriesData: Data = Data()
     @AppStorage("hpdCachedURL") private var hpdCachedURL: String = ""
     @AppStorage("hpdLastFetchTS") private var hpdLastFetchTS: Double = 0
+    @AppStorage("lastHPDSyncDate") private var lastHPDSyncDate: Double = 0
     @AppStorage("hpdHadLastError") private var hpdHadLastError: Bool = false
     @AppStorage("selectedLocationFiltersData") private var selectedLocationFiltersData: Data = Data()
     @State private var decodedLocationFilters: Set<String> = []
     @State private var cachedFilteredEntries: [HPDEntry] = []
     @State private var cachedFilteredCount: Int = 0
     @State private var cachedGroupedByDate: [(String, [HPDEntry])] = []
-    @State private var cachedGroupedByLocationForFavorites: [(location: String, dates: [(date: String, vehicles: [HPDEntry])])] = []
     @State private var showLocationFilterSheet: Bool = false
     @State private var isUserNavigatingFromHeader: Bool = false
     @State private var showFilter: Bool = false
@@ -1513,7 +1518,7 @@ struct HPDView: View {
     @State private var showCarfaxTeaser: Bool = false
     @State private var showCarfaxUpsellDialog: Bool = false
     @State private var showPaywall: Bool = false
-    @State private var showTierDetailsAlert: Bool = false
+    @State private var showQuotaSheet: Bool = false
     @State private var pendingMapAddress: String = ""
     @State private var pendingMapTime: String = ""
     @State private var selectedAddressForMap: String = ""
@@ -2252,7 +2257,7 @@ struct HPDView: View {
     @ViewBuilder private var favoritesWalletList: some View {
         ZStack {
             Color(UIColor.systemGroupedBackground).ignoresSafeArea()
-            VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
                 // Preserve location filter chips if any are active
                 if !selectedLocationFilters.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -2280,8 +2285,8 @@ struct HPDView: View {
                             .buttonStyle(.bordered)
                             .clipShape(Capsule())
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
                     }
                 }
 
@@ -2294,89 +2299,100 @@ struct HPDView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ScrollView {
-                        LazyVStack(spacing: 16) {
-                            ForEach(cachedGroupedByLocationForFavorites, id: \.location) { group in
-                                let totalVehicles = group.dates.reduce(0) { $0 + $1.vehicles.count }
-                                let shortAddress = group.location.components(separatedBy: " Houston").first ?? group.location
-                                VStack(alignment: .leading, spacing: 12) {
-                                    DisclosureGroup(
-                                        isExpanded: Binding(
-                                            get: { expandedLocations[group.location] ?? true },
-                                            set: { expandedLocations[group.location] = $0 }
-                                        )
-                                    ) {
-                                        // Date groups — permanently visible inside each location
-                                        ForEach(group.dates, id: \.date) { datePair in
-                                            VStack(alignment: .leading, spacing: 8) {
-                                                HStack {
-                                                    Image(systemName: "calendar")
-                                                        .foregroundColor(.accentColor)
-                                                        .font(.subheadline)
-                                                    Text(datePair.date)
-                                                        .font(.subheadline.bold())
-                                                        .foregroundStyle(.secondary)
-                                                    Spacer()
-                                                }
+                        LazyVStack(alignment: .leading, spacing: 10) {
+                            ForEach(groupedFavorites, id: \.date) { dateGroup in
+                                VStack(alignment: .leading, spacing: 10) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "calendar")
+                                            .foregroundColor(.accentColor)
+                                            .font(.caption)
+                                        Text(dateGroup.date)
+                                            .font(.headline)
+                                            .foregroundStyle(.primary)
+                                            .lineLimit(1)
+                                            .minimumScaleFactor(0.9)
+                                        Spacer()
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                                                // Vehicles sorted by odometer descending — address suppressed (shown as section header)
+                                    ForEach(dateGroup.locations, id: \.address) { locationGroup in
+                                        let shortAddress = locationGroup.address.components(separatedBy: " Houston").first ?? locationGroup.address
+                                        let totalVehicles = locationGroup.vehicles.count
+                                        let sectionKey = "\(dateGroup.date)|\(locationGroup.address)"
+
+                                        VStack(alignment: .leading, spacing: 12) {
+                                            DisclosureGroup(
+                                                isExpanded: Binding(
+                                                    get: { expandedLocations[sectionKey] ?? true },
+                                                    set: { expandedLocations[sectionKey] = $0 }
+                                                )
+                                            ) {
                                                 VStack(spacing: 8) {
-                                                    ForEach(datePair.vehicles) { e in
-                                                        card(for: e, showAddress: false)
+                                                    ForEach(locationGroup.vehicles) { e in
+                                                        VehicleCardView(entry: e, showAddress: false, showQuickInventory: false)
                                                     }
                                                 }
-                                            }
 
-                                            if datePair.date != group.dates.last?.date {
-                                                Divider().padding(.top, 4)
-                                            }
-                                        }
-
-                                        HStack {
-                                            Spacer()
-                                            Button {
-                                                selectedAddressForMap = group.location
-                                                showMapAlert = true
-                                            } label: {
-                                                HStack(spacing: 8) {
-                                                    Image(systemName: "location.fill")
-                                                    Text("Navigate")
-                                                        .font(.subheadline.bold())
+                                                HStack {
+                                                    Spacer()
+                                                    Button {
+                                                        selectedAddressForMap = locationGroup.address
+                                                        showMapAlert = true
+                                                    } label: {
+                                                        HStack(spacing: 8) {
+                                                            Image(systemName: "location.fill")
+                                                            Text("Navigate")
+                                                                .font(.subheadline.bold())
+                                                        }
+                                                        .padding(.vertical, 8)
+                                                        .padding(.horizontal, 20)
+                                                        .background(Color.blue.opacity(0.12))
+                                                        .clipShape(Capsule())
+                                                        .foregroundStyle(.blue)
+                                                    }
+                                                    .buttonStyle(.plain)
+                                                    Spacer()
                                                 }
-                                                .padding(.vertical, 8)
-                                                .padding(.horizontal, 20)
-                                                .background(Color.blue.opacity(0.12))
-                                                .clipShape(Capsule())
-                                                .foregroundStyle(.blue)
+                                                .padding(.top, 12)
+                                            } label: {
+                                                HStack(spacing: 6) {
+                                                    Image(systemName: "mappin.and.ellipse")
+                                                        .font(.callout)
+                                                        .foregroundStyle(.blue)
+
+                                                    Text(shortAddress.capitalized)
+                                                        .font(.subheadline.weight(.semibold))
+                                                        .foregroundStyle(.primary)
+                                                        .lineLimit(1)
+                                                        .truncationMode(.tail)
+
+                                                    Spacer(minLength: 6)
+
+                                                    Text("\(totalVehicles) \(totalVehicles == 1 ? "vehicle" : "vehicles")")
+                                                        .font(.footnote)
+                                                        .foregroundStyle(.secondary)
+                                                        .padding(.horizontal, 6)
+                                                        .padding(.vertical, 2)
+                                                        .background(Capsule().fill(Color.secondary.opacity(0.14)))
+                                                }
+                                                .frame(maxWidth: .infinity, alignment: .leading)
                                             }
-                                            .buttonStyle(.plain)
-                                            Spacer()
+                                            .tint(.accentColor)
                                         }
-                                        .padding(.top, 16)
-                                    } label: {
-                                        HStack(spacing: 6) {
-                                            Image(systemName: "mappin.and.ellipse")
-                                                .font(.title3)
-                                                .foregroundStyle(.blue)
-
-                                            Text("\(shortAddress.capitalized) (\(totalVehicles))")
-                                                .font(.title3.bold())
-                                                .foregroundStyle(.blue)
-                                                .lineLimit(1)
-                                                .truncationMode(.tail)
-
-                                            Spacer()
-                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 12)
+                                        .background(Color(UIColor.secondarySystemGroupedBackground))
+                                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                        .shadow(color: Color.primary.opacity(0.08), radius: 6, x: 0, y: 3)
                                     }
-                                    .tint(.accentColor)
                                 }
-                                .padding(20)
-                                .background(Color(UIColor.secondarySystemGroupedBackground))
-                                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                                .shadow(color: Color.primary.opacity(0.1), radius: 10, x: 0, y: 5)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 8)
                     }
                     .alert("Open Apple Maps", isPresented: $showMapAlert) {
                         Button("Cancel", role: .cancel) { }
@@ -2460,7 +2476,7 @@ struct HPDView: View {
                         filterSortMenu
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, favoritesOnly ? 8 : 16)
 
             }
 
@@ -2540,7 +2556,7 @@ struct HPDView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    showTierDetailsAlert = true
+                    showQuotaSheet = true
                 } label: {
                     let tierKey = supabaseService.currentProfile?.plan_tier?.lowercased()
                                   ?? storeManager.activeSubscriptionTier.tierKey
@@ -2556,15 +2572,12 @@ struct HPDView: View {
                 }
             }
         }
-        .alert("Current Plan", isPresented: $showTierDetailsAlert) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            let fallbackTierKey = storeManager.activeSubscriptionTier.tierKey
-            let tierName = supabaseService.currentProfile?.plan_tier ?? fallbackTierKey
-            let isUnlimited = userRole == "super_admin" || storeManager.activeSubscriptionTier == .platinum
-            let limit = storeManager.dailyLimit(from: supabaseService.tierConfigs)
-            let limitDisplay = isUnlimited ? "Unlimited" : "\(limit)"
-            Text("You are currently on the \(tierName.capitalized) plan, which grants \(limitDisplay) daily HPD extractions.")
+        .sheet(isPresented: $showQuotaSheet) {
+            QuotaUsageView()
+                .environmentObject(supabaseService)
+                .environmentObject(storeManager)
+                .presentationDetents([.height(300), .medium])
+                .presentationDragIndicator(.visible)
         }
     }
 
@@ -2680,12 +2693,13 @@ struct HPDView: View {
                     onError: { message in
                         failExtraction(message)
                     },
-                    onExtract: { odo, date in
+                    onExtract: { odo, date, realModel in
                         DispatchQueue.main.async {
                             if let v = mileageVIN, !v.isEmpty {
                                 var info = supabaseService.odoByVIN[v] ?? OdoInfo(odometer: "", testDate: "", privateValue: nil)
                                 info.odometer = odo
                                 info.testDate = date.dateOnly
+                                info.realModel = realModel?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? realModel?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
                                 supabaseService.setOdoInfo(info, forVIN: v)
                                 spvVIN = v
                                 spvOdo = odo
@@ -3090,7 +3104,6 @@ struct HPDView: View {
         cachedFilteredEntries = filtered
         cachedFilteredCount = filtered.count
         cachedGroupedByDate = groupedByDate(from: filtered)
-        cachedGroupedByLocationForFavorites = groupedByLocationForFavorites(from: filtered)
     }
 
     private func groupedByDate(from base: [HPDEntry]) -> [(String, [HPDEntry])] {
@@ -3151,39 +3164,38 @@ struct HPDView: View {
         }
     }
 
-    // MARK: - Favorites: Location-primary grouping (alphabetical locations → chronological dates → odometer desc)
+    // MARK: - Favorites: Date-primary grouping (chronological dates → alphabetical locations → odometer desc)
 
-    private func groupedByLocationForFavorites(from base: [HPDEntry]) -> [(location: String, dates: [(date: String, vehicles: [HPDEntry])])] {
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "en_US_POSIX")
-        df.dateFormat = "MM/dd/yyyy"
+    private var groupedFavorites: [(date: String, locations: [(address: String, vehicles: [HPDEntry])])] {
+        let byDate = Dictionary(grouping: cachedFilteredEntries, by: { $0.dateScheduled })
 
-        let byLocation = Dictionary(grouping: base) { e -> String in
-            let addr = sanitizedAddressForMaps(e.lotAddress)
-            return addr.isEmpty ? e.lotName.trimmingCharacters(in: .whitespacesAndNewlines) : addr
-        }
-
-        return byLocation
-            .sorted { $0.key < $1.key }
-            .map { location, vehicles in
-                let byDate = Dictionary(grouping: vehicles, by: { $0.dateScheduled })
-                let sortedDates = byDate.keys.sorted { a, b in
-                    switch (df.date(from: a), df.date(from: b)) {
-                    case let (da?, db?): return da < db
-                    default: return a < b
-                    }
+        return byDate
+            .map { dateKey, dateVehicles in
+                let byLocation = Dictionary(grouping: dateVehicles) { e -> String in
+                    let addr = sanitizedAddressForMaps(e.lotAddress)
+                    return addr.isEmpty ? e.lotName.trimmingCharacters(in: .whitespacesAndNewlines) : addr
                 }
-                let datePairs = sortedDates.map { dateKey -> (date: String, vehicles: [HPDEntry]) in
-                    let dayVehicles = (byDate[dateKey] ?? []).sorted { a, b in
-                        let aInfo = supabaseService.odoByVIN[a.vin] ?? supabaseService.odoByVIN[normalizeVIN(a.vin)]
-                        let bInfo = supabaseService.odoByVIN[b.vin] ?? supabaseService.odoByVIN[normalizeVIN(b.vin)]
-                        let aOdo = Int(aInfo?.odometer ?? "0") ?? 0
-                        let bOdo = Int(bInfo?.odometer ?? "0") ?? 0
-                        return aOdo > bOdo
+
+                let sortedLocations = byLocation
+                    .map { address, vehicles in
+                        let sortedVehicles = vehicles.sorted { a, b in
+                            let aInfo = supabaseService.odoByVIN[a.vin] ?? supabaseService.odoByVIN[normalizeVIN(a.vin)]
+                            let bInfo = supabaseService.odoByVIN[b.vin] ?? supabaseService.odoByVIN[normalizeVIN(b.vin)]
+                            let aOdo = Int(aInfo?.odometer ?? "0") ?? 0
+                            let bOdo = Int(bInfo?.odometer ?? "0") ?? 0
+                            return aOdo > bOdo
+                        }
+                        return (address: address, vehicles: sortedVehicles)
                     }
-                    return (date: dateKey, vehicles: dayVehicles)
+                    .sorted { $0.address < $1.address }
+
+                return (date: dateKey, locations: sortedLocations)
+            }
+            .sorted { a, b in
+                switch (Kbuck.parseAuctionDate(from: a.date), Kbuck.parseAuctionDate(from: b.date)) {
+                case let (da?, db?): return da < db
+                default: return a.date < b.date
                 }
-                return (location: location, dates: datePairs)
             }
     }
 
@@ -3229,7 +3241,7 @@ struct HPDView: View {
     }
 
     @ViewBuilder private func card(for e: HPDEntry, showAddress: Bool = true) -> some View {
-        VehicleCardView(entry: e, showAddress: showAddress)
+        VehicleCardView(entry: e, showAddress: showAddress, showQuickInventory: false)
     }
 
     private var extractionOverlayMessage: String {
@@ -3295,6 +3307,18 @@ struct HPDView: View {
         } else {
             trimmed = defaultURLString
         }
+
+        let isDefaultHPDSource = trimmed == defaultURLString
+        let lastDate = Date(timeIntervalSince1970: lastHPDSyncDate)
+        let hasLocalData = !entries.isEmpty || !hpdCachedEntriesData.isEmpty
+        if isDefaultHPDSource && Calendar.current.isDateInToday(lastDate) && hasLocalData {
+            if entries.isEmpty && !hpdCachedEntriesData.isEmpty {
+                entries = decodeCachedEntries(hpdCachedEntriesData).filter { !isDateInPast($0.dateScheduled) }
+            }
+            print("✅ HPD: Data already synced today. Using local cache.")
+            return
+        }
+
         guard let url = URL(string: trimmed) else {
             errorMessage = "URL inválida"
             manualURLModeEnabled = true
@@ -3331,6 +3355,7 @@ struct HPDView: View {
                             self.hpdCachedEntriesData = encodeEntries(validEntries)
                             self.hpdCachedURL = trimmed
                             self.hpdLastFetchTS = Date().timeIntervalSince1970
+                            self.lastHPDSyncDate = Date().timeIntervalSince1970
                             self.errorMessage = nil
                             self.hpdHadLastError = false
                             self.isLoading = false

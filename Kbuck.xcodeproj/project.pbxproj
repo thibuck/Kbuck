@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BC5151372F7B160C0059AEBF /* QuotaUsageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC5151362F7B160C0059AEBF /* QuotaUsageView.swift */; };
 		BCB1B9782F788AA400E59B19 /* KbuckStore.storekit in Resources */ = {isa = PBXBuildFile; fileRef = BCB1B9772F788AA400E59B19 /* KbuckStore.storekit */; };
 		BCB1B9792F788AA400E59B19 /* KbuckStore.storekit in Resources */ = {isa = PBXBuildFile; fileRef = BCB1B9772F788AA400E59B19 /* KbuckStore.storekit */; };
 		BCB1B97A2F788AA400E59B19 /* KbuckStore.storekit in Resources */ = {isa = PBXBuildFile; fileRef = BCB1B9772F788AA400E59B19 /* KbuckStore.storekit */; };
@@ -40,6 +41,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		BC5151362F7B160C0059AEBF /* QuotaUsageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuotaUsageView.swift; sourceTree = "<group>"; };
 		BC9A493B2EA2CCAE00011997 /* Kbuck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Kbuck.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BC9A49482EA2CCAF00011997 /* KbuckTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KbuckTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BC9A49522EA2CCAF00011997 /* KbuckUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KbuckUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -124,6 +126,7 @@
 				BCD18D772F7479020018C5E6 /* SupabaseService.swift */,
 				BCB1B9772F788AA400E59B19 /* KbuckStore.storekit */,
 				BCD18D792F747AE60018C5E6 /* HPDSettingsView.swift */,
+				BC5151362F7B160C0059AEBF /* QuotaUsageView.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -297,6 +300,7 @@
 				BCD18D762F7478CD0018C5E6 /* HPDParser.swift in Sources */,
 				BCD18D742F7478820018C5E6 /* HPDModels.swift in Sources */,
 				BCD18D7A2F747AE60018C5E6 /* HPDSettingsView.swift in Sources */,
+				BC5151372F7B160C0059AEBF /* QuotaUsageView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

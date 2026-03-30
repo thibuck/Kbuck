@@ -58,6 +58,7 @@ struct ContentView: View {
     @State private var isAuthReady     = false
     @State private var didBootstrapFavorites = false
     @State private var showInitialPaywall: Bool = false
+    @AppStorage("hpdRefreshTrigger") private var hpdRefreshTrigger: Int = 0
     @AppStorage("hpdUserBanned")          private var isUserBanned: Bool = false
     @AppStorage("hasSeenInitialPaywall")  private var hasSeenInitialPaywall: Bool = false
 
@@ -141,6 +142,7 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active, isAuthenticated else { return }
             runGlobalLifecycleSync()
+            hpdRefreshTrigger += 1
         }
         .sheet(isPresented: $showInitialPaywall) {
             PaywallView()

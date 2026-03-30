@@ -19,6 +19,7 @@ struct VehicleCardView: View {
 
     let entry: HPDEntry
     var showAddress: Bool = true
+    var showQuickInventory: Bool = true
 
     @EnvironmentObject private var supabaseService: SupabaseService
     @EnvironmentObject private var storeManager: StoreManager
@@ -28,9 +29,15 @@ struct VehicleCardView: View {
     // MARK: Card state
     @State private var isExpanded: Bool
     
-    init(entry: HPDEntry, showAddress: Bool = true, initiallyExpanded: Bool = false) {
+    init(
+        entry: HPDEntry,
+        showAddress: Bool = true,
+        showQuickInventory: Bool = true,
+        initiallyExpanded: Bool = false
+    ) {
         self.entry = entry
         self.showAddress = showAddress
+        self.showQuickInventory = showQuickInventory
         _isExpanded = State(initialValue: initiallyExpanded)
     }
     @State private var copiedVIN: String? = nil
@@ -64,8 +71,6 @@ struct VehicleCardView: View {
     // Paywall
     @State private var showPaywall = false
 
-    // Quick Inventory
-    @State private var showQuickInventory = false
 
     // Extraction
     @State private var showLegalDisclaimer      = false
@@ -98,55 +103,46 @@ struct VehicleCardView: View {
         VStack(alignment: .leading, spacing: 8) {
 
             // ── Header (always visible) — tap to expand/collapse ──────────
-            HStack(alignment: .center, spacing: 10) {
+            HStack(alignment: .center, spacing: 8) {
                 if let asset = brandAssetName(for: entry.make) {
                     Image(asset)
                         .resizable()
                         .scaledToFit()
-                        .frame(width: 44, height: 28)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .frame(width: 20, height: 20)
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("\(yearStr) \(brandDisplayName(for: entry.make)) \(entry.model)".uppercased())
-                        .font(.headline)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.82)
 
-                    if showAddress {
-                        let rawAddress = entry.lotAddress.trimmingCharacters(in: .whitespacesAndNewlines)
-                        let rawName    = entry.lotName.trimmingCharacters(in: .whitespacesAndNewlines)
-                        let isValidAddress = rawAddress.count > 5
-                            && !rawAddress.lowercased().elementsEqual("llc")
-                            && !rawAddress.lowercased().elementsEqual("inc")
-                        let displayAddr: String = {
-                            if isValidAddress {
-                                let mapped = sanitizedAddr(rawAddress)
-                                return mapped.isEmpty ? rawAddress : mapped
-                            } else {
-                                return rawName.count > 3 ? rawName : "Location Unavailable"
-                            }
-                        }()
-                        Text(displayAddr)
-                            .font(.caption2)
+                Text("\(yearStr) \(brandDisplayName(for: entry.make)) \(odoInfo?.realModel?.capitalized ?? entry.model)".uppercased())
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Spacer(minLength: 0)
+
+                if let rawOdo = odoInfo?.odometer,
+                   let odoInt = Int(rawOdo.filter(\.isNumber)) {
+                    let odoInK = odoInt / 1000
+                    HStack(spacing: 4) {
+                        Image(systemName: "fuelpump.fill")
+                            .foregroundColor(.gray)
+                        Text("\(odoInK)k")
+                    }
+                    .font(.subheadline)
+                    .lineLimit(1)
+                    .layoutPriority(1)
+                }
+
+                if showQuickInventory {
+                    Button {
+                        showQuickDataInfo = true
+                    } label: {
+                        Image(systemName: "bolt.car.fill")
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
                     }
+                    .buttonStyle(.plain)
                 }
-                Spacer(minLength: 4)
-                if let info = odoInfo {
-                    let odoK = formatOdoK(info.odometer)
-                    if odoK != "no odo" {
-                        HStack(spacing: 4) {
-                            Image(systemName: "fuelpump.fill")
-                                .foregroundStyle(.secondary)
-                                .font(.headline)
-                            Text(odoK)
-                                .font(.headline)
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
+
                 Button {
                     haptic(.light)
                     if isFav {
@@ -160,7 +156,7 @@ struct VehicleCardView: View {
                     }
                 } label: {
                     Image(systemName: "star.fill")
-                        .font(.title2)
+                        .font(.subheadline)
                         .foregroundStyle(isFav ? AnyShapeStyle(.yellow) : AnyShapeStyle(.secondary))
                 }
                 .buttonStyle(.plain)
@@ -181,12 +177,13 @@ struct VehicleCardView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     Text("VIN: \(entry.vin)")
-                        .font(.subheadline)
+                        .font(.footnote)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                        .minimumScaleFactor(0.9)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     if copiedVIN == entry.vin {
                         Text("Copied!")
-                            .font(.caption)
+                            .font(.caption2)
                             .foregroundStyle(.green)
                     }
                     Spacer(minLength: 0)
@@ -224,18 +221,34 @@ struct VehicleCardView: View {
                 // Odometer / inspection date / private value
                 if let odo = odoInfo {
                     HStack(spacing: 6) {
-                        Image(systemName: "fuelpump.fill").foregroundStyle(.secondary)
+                        Image(systemName: "fuelpump.fill")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                         Text(odo.odometer.formatWithCommas() + " miles")
+                            .font(.footnote)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.9)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     HStack(spacing: 6) {
                         Image(systemName: "clock.fill")
-                            .font(.subheadline).foregroundStyle(.secondary)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                         Text("\(odo.testDate.dateOnly) \(odo.testDate.dateOnly.timeAgoShort())")
+                            .font(.footnote)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.9)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     HStack(spacing: 6) {
                         Image(systemName: "banknote.fill")
-                            .font(.subheadline).foregroundStyle(.secondary)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                         Text(odo.privateValue.formatAsCurrency())
+                            .font(.footnote)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.9)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
 
@@ -692,7 +705,7 @@ struct ExtractionFlowView: View {
                     onWaitingForCaptcha:  { DispatchQueue.main.async { exState = .waitingForCaptcha } },
                     onFetchingOdometer:   { DispatchQueue.main.async { exState = .fetchingOdometer } },
                     onError:              { msg in fail(msg) },
-                    onExtract:            { odo, date in handleOdo(odo: odo, date: date) }
+                    onExtract:            { odo, date, realModel in handleOdo(odo: odo, date: date, realModel: realModel) }
                 )
                 .frame(maxWidth: .infinity)
                 .frame(height: exState == .waitingForCaptcha ? 500 : 0)
@@ -737,12 +750,13 @@ struct ExtractionFlowView: View {
         }
     }
 
-    private func handleOdo(odo: String, date: String) {
+    private func handleOdo(odo: String, date: String, realModel: String?) {
         DispatchQueue.main.async {
             guard !mileageVIN.isEmpty else { return }
             var info = supabaseService.odoByVIN[mileageVIN] ?? OdoInfo(odometer: "", testDate: "", privateValue: nil)
             info.odometer = odo
             info.testDate = date.dateOnly
+            info.realModel = realModel?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? realModel?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
             supabaseService.setOdoInfo(info, forVIN: mileageVIN)
             spvVIN  = mileageVIN
             spvOdo  = odo

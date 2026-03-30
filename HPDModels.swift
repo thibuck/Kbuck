@@ -26,6 +26,7 @@ struct OdoInfo: Codable, Equatable {
     var odometer: String
     var testDate: String
     var privateValue: String?
+    var realModel: String? = nil
 }
 
 struct LegalAgreementLog: Codable {

@@ -34,7 +34,7 @@ struct HomeSummaryView: View {
     @EnvironmentObject private var supabaseService: SupabaseService
     @EnvironmentObject private var storeManager: StoreManager
     @AppStorage("userRole") private var userRole: String = "user"
-    @State private var showTierDetailsAlert: Bool = false
+    @State private var showQuotaSheet: Bool = false
 
     private var currentTierKey: String {
         supabaseService.currentProfile?.plan_tier?.lowercased() ?? storeManager.activeSubscriptionTier.tierKey
@@ -204,7 +204,7 @@ struct HomeSummaryView: View {
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
-                        showTierDetailsAlert = true
+                        showQuotaSheet = true
                     } label: {
                         if UIImage(named: currentTierKey) != nil {
                             Image(currentTierKey)
@@ -218,11 +218,12 @@ struct HomeSummaryView: View {
                     }
                 }
             }
-            .alert("Current Plan", isPresented: $showTierDetailsAlert) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                let limitDisplay = userRole == "super_admin" ? "Unlimited" : "\(currentTierLimit)"
-                Text("You are currently on the \(currentTierDisplayName) plan, which grants \(limitDisplay) daily HPD extractions.")
+            .sheet(isPresented: $showQuotaSheet) {
+                QuotaUsageView()
+                    .environmentObject(supabaseService)
+                    .environmentObject(storeManager)
+                    .presentationDetents([.height(300), .medium])
+                    .presentationDragIndicator(.visible)
             }
         }
         .task {

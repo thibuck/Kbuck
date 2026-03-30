@@ -351,7 +351,7 @@ struct HPDSettingsView: View {
     @State private var showManageSubscriptions   = false
     @State private var isLoadingProfile: Bool    = false
     @State private var isDataSourceExpanded: Bool = false
-    @State private var showTierDetailsAlert: Bool = false
+    @State private var showQuotaSheet: Bool = false
 
     private let defaultURLString = "https://www.houstontx.gov/police/auto_dealers_detail/Vehicles_Scheduled_For_Auction.htm"
 
@@ -470,47 +470,11 @@ struct HPDSettingsView: View {
 
                 // Regular user: Daily Fetch Quota inline
                 if userRole != "super_admin" {
-                    Section(header: Text("Daily Fetch Quota")) {
-                        if isLoadingProfile {
-                            ProgressView()
-                        } else {
-                            TimelineView(.everyMinute) { context in
-                                VStack(alignment: .leading, spacing: 10) {
-                                    ProgressView(
-                                        value: Double(currentCount),
-                                        total: Double(dailyLimit)
-                                    ) {
-                                        Text("Successful fetches today")
-                                            .font(.subheadline)
-                                    } currentValueLabel: {
-                                        Text("\(currentCount) of \(dailyLimit)")
-                                            .font(.caption.monospacedDigit())
-                                    }
-                                    .progressViewStyle(.linear)
-                                    .tint(progressTint)
-
-                                    Text(resetsInMessage(now: context.date))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-
-                            Text("Failed extraction attempts do not consume quota slots. A unique extraction credit is deducted only upon successful data cache.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-
-                            Button {
-                                Task {
-                                    isLoadingProfile = true
-                                    await supabaseService.fetchCurrentProfile()
-                                    isLoadingProfile = false
-                                }
-                            } label: {
-                                Label("Refresh Usage", systemImage: "arrow.clockwise")
-                            }
-                        }
+                    Section {
+                        QuotaUsageView()
+                            .environmentObject(supabaseService)
+                            .environmentObject(storeManager)
                     }
-                    .disabled(isLoadingProfile)
                 }
 
                 // Super admin: Data Source collapsed DisclosureGroup
@@ -641,7 +605,7 @@ struct HPDSettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
-                        showTierDetailsAlert = true
+                        showQuotaSheet = true
                     } label: {
                         if UIImage(named: currentTierKey) != nil {
                             Image(currentTierKey)
@@ -655,11 +619,12 @@ struct HPDSettingsView: View {
                     }
                 }
             }
-            .alert("Current Plan", isPresented: $showTierDetailsAlert) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                let limitDisplay = userRole == "super_admin" ? "Unlimited" : "\(dailyLimit)"
-                Text("You are currently on the \(currentTierDisplayName) plan, which grants \(limitDisplay) daily HPD extractions.")
+            .sheet(isPresented: $showQuotaSheet) {
+                QuotaUsageView()
+                    .environmentObject(supabaseService)
+                    .environmentObject(storeManager)
+                    .presentationDetents([.height(300), .medium])
+                    .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showHPDWeb) {
                 NavigationStack {
