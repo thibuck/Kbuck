@@ -153,6 +153,42 @@ func formatPrivateValueForDisplay(_ s: String) -> String {
     return nf.string(from: NSNumber(value: val)) ?? t
 }
 
+/// Maps raw 4-letter database make codes (and full names) to properly
+/// capitalised human-readable brand names for display throughout the UI.
+func brandDisplayName(for rawMake: String) -> String {
+    let m = rawMake.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if m.isEmpty { return rawMake }
+    if m.contains("toyota")     || m.hasPrefix("toyo") { return "Toyota" }
+    if m.contains("honda")      || m.hasPrefix("hond") { return "Honda" }
+    if m.contains("chevrolet")  || m.contains("chevy") || m.hasPrefix("chev") { return "Chevrolet" }
+    if m.contains("nissan")     || m.hasPrefix("niss") { return "Nissan" }
+    if m.contains("dodge")      || m.hasPrefix("dodg") { return "Dodge" }
+    if m.contains("bmw")                               { return "BMW" }
+    if m.contains("ford")       || m.hasPrefix("ford") { return "Ford" }
+    if m.contains("acura")      || m.hasPrefix("acur") { return "Acura" }
+    if m.contains("tesla")      || m.hasPrefix("tesl") { return "Tesla" }
+    if m.contains("kia")                               { return "Kia" }
+    if m.contains("ram")        || m.hasPrefix("ram")  { return "Ram" }
+    if m.contains("gmc")                               { return "GMC" }
+    if m.contains("hyundai")    || m.hasPrefix("hyun") { return "Hyundai" }
+    if m.contains("volkswagen") || m.hasPrefix("volk") { return "Volkswagen" }
+    if m.contains("mercedes")   || m.hasPrefix("merz") { return "Mercedes-Benz" }
+    if m.contains("mazda")      || m.hasPrefix("mazd") { return "Mazda" }
+    if m.contains("buick")      || m.hasPrefix("buic") { return "Buick" }
+    if m.contains("cadillac")   || m.hasPrefix("cadi") { return "Cadillac" }
+    if m.contains("isuzu")      || m.hasPrefix("isuz") { return "Isuzu" }
+    if m.contains("subaru")     || m.hasPrefix("suba") { return "Subaru" }
+    if m.contains("mitsubishi") || m.hasPrefix("mits") { return "Mitsubishi" }
+    if m.contains("lexus")      || m.hasPrefix("lexu") { return "Lexus" }
+    if m.contains("scion")      || m.hasPrefix("scio") { return "Scion" }
+    if m.contains("chrysler")   || m.hasPrefix("chry") { return "Chrysler" }
+    if m.contains("jeep")       || m.hasPrefix("jeep") { return "Jeep" }
+    if m.contains("infiniti")   || m.hasPrefix("infi") { return "Infiniti" }
+    if m.contains("pontiac")    || m.hasPrefix("pont") { return "Pontiac" }
+    if m.contains("lincoln")    || m.hasPrefix("linc") { return "Lincoln" }
+    return rawMake.capitalized
+}
+
 /// Shared brand-to-asset mapper used by HPD and Dashboard views.
 func brandAssetName(for rawMake: String) -> String? {
     let m = rawMake.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()

@@ -1,5 +1,6 @@
 import SwiftUI
 import Supabase
+import StoreKit
 
 struct AdminUserStatus: Codable, Identifiable {
     let id: UUID
@@ -342,13 +343,15 @@ struct HPDSettingsView: View {
     @AppStorage("hpdCachedURL")        private var hpdCachedURL: String = ""
     @AppStorage("openWebInSafari")     private var openWebInSafari: Bool = false
 
-    @State private var showClearOdoAlert  = false
-    @State private var showSignOutAlert   = false
-    @State private var showHPDWeb: Bool   = false
-    @State private var showTerms: Bool    = false
-    @State private var showPaywall: Bool  = false
-    @State private var isLoadingProfile: Bool = false
+    @State private var showClearOdoAlert         = false
+    @State private var showSignOutAlert          = false
+    @State private var showHPDWeb: Bool          = false
+    @State private var showTerms: Bool           = false
+    @State private var showPaywall: Bool         = false
+    @State private var showManageSubscriptions   = false
+    @State private var isLoadingProfile: Bool    = false
     @State private var isDataSourceExpanded: Bool = false
+    @State private var showTierDetailsAlert: Bool = false
 
     private let defaultURLString = "https://www.houstontx.gov/police/auto_dealers_detail/Vehicles_Scheduled_For_Auction.htm"
 
@@ -358,10 +361,33 @@ struct HPDSettingsView: View {
 
     private var currentCount: Int { supabaseService.currentProfile?.scrape_count_today ?? 0 }
 
-    private var dailyLimit: Int { storeManager.activeSubscriptionTier.hpdSearchLimit }
+    private var currentTierKey: String {
+        supabaseService.currentProfile?.plan_tier?.lowercased() ?? storeManager.activeSubscriptionTier.tierKey
+    }
+
+    private var currentTierDisplayName: String {
+        currentTierKey.capitalized
+    }
+
+    private var dailyLimit: Int {
+        if let remoteLimit = supabaseService.tierConfigs[currentTierKey]?.daily_fetch_limit {
+            return remoteLimit
+        }
+
+        switch currentTierKey {
+        case "silver":
+            return 10
+        case "gold":
+            return 30
+        case "platinum":
+            return 200
+        default:
+            return 3
+        }
+    }
 
     private var progressTint: Color {
-        guard dailyLimit != Int.max, dailyLimit > 0 else { return .green }
+        guard dailyLimit > 0 else { return .green }
         let ratio = Double(currentCount) / Double(dailyLimit)
         if ratio >= 0.9 { return .red }
         if ratio >= 0.6 { return .yellow }
@@ -414,7 +440,7 @@ struct HPDSettingsView: View {
                     }
                 }
 
-                // Regular user: Subscription tier + Upgrade Plan
+                // Regular user: Subscription tier + Upgrade / Manage Plan
                 if userRole != "super_admin" {
                     Section(header: Text("Subscription")) {
                         HStack {
@@ -426,10 +452,17 @@ struct HPDSettingsView: View {
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
-                            if storeManager.activeSubscriptionTier != .platinum {
-                                Button("Upgrade Plan") { showPaywall = true }
-                                    .buttonStyle(.borderedProminent)
-                                    .controlSize(.small)
+                            HStack(spacing: 8) {
+                                if storeManager.activeSubscriptionTier != .none {
+                                    Button("Manage") { showManageSubscriptions = true }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                }
+                                if storeManager.activeSubscriptionTier != .platinum {
+                                    Button("Upgrade Plan") { showPaywall = true }
+                                        .buttonStyle(.borderedProminent)
+                                        .controlSize(.small)
+                                }
                             }
                         }
                     }
@@ -443,24 +476,18 @@ struct HPDSettingsView: View {
                         } else {
                             TimelineView(.everyMinute) { context in
                                 VStack(alignment: .leading, spacing: 10) {
-                                    if dailyLimit == Int.max {
-                                        Label("Unlimited fetches available", systemImage: "infinity")
+                                    ProgressView(
+                                        value: Double(currentCount),
+                                        total: Double(dailyLimit)
+                                    ) {
+                                        Text("Successful fetches today")
                                             .font(.subheadline)
-                                            .foregroundStyle(.green)
-                                    } else {
-                                        ProgressView(
-                                            value: Double(currentCount),
-                                            total: Double(dailyLimit)
-                                        ) {
-                                            Text("Successful fetches today")
-                                                .font(.subheadline)
-                                        } currentValueLabel: {
-                                            Text("\(currentCount) of \(dailyLimit)")
-                                                .font(.caption.monospacedDigit())
-                                        }
-                                        .progressViewStyle(.linear)
-                                        .tint(progressTint)
+                                    } currentValueLabel: {
+                                        Text("\(currentCount) of \(dailyLimit)")
+                                            .font(.caption.monospacedDigit())
                                     }
+                                    .progressViewStyle(.linear)
+                                    .tint(progressTint)
 
                                     Text(resetsInMessage(now: context.date))
                                         .font(.caption)
@@ -611,6 +638,29 @@ struct HPDSettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        showTierDetailsAlert = true
+                    } label: {
+                        if UIImage(named: currentTierKey) != nil {
+                            Image(currentTierKey)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 30, height: 30)
+                        } else {
+                            Image(systemName: "star.shield.fill")
+                                .font(.title2)
+                        }
+                    }
+                }
+            }
+            .alert("Current Plan", isPresented: $showTierDetailsAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                let limitDisplay = userRole == "super_admin" ? "Unlimited" : "\(dailyLimit)"
+                Text("You are currently on the \(currentTierDisplayName) plan, which grants \(limitDisplay) daily HPD extractions.")
+            }
             .sheet(isPresented: $showHPDWeb) {
                 NavigationStack {
                     if let url = URL(string: hpdCachedURL.isEmpty ? defaultURLString : hpdCachedURL) {
@@ -625,13 +675,19 @@ struct HPDSettingsView: View {
             }
             .sheet(isPresented: $showPaywall) {
                 PaywallView()
+                    .onChange(of: storeManager.purchasedSubscriptions) { _, _ in
+                        Task { await supabaseService.fetchCurrentProfile() }
+                    }
             }
+            .manageSubscriptionsSheet(isPresented: $showManageSubscriptions)
             .onAppear {
                 if hpdManualURLInput.isEmpty {
                     hpdManualURLInput = defaultURLString
                 }
             }
             .task {
+                // Refresh tier configs on every Settings open — limits reflect DB without restart
+                await supabaseService.fetchTierConfigs()
                 guard userRole != "super_admin" else { return }
                 isLoadingProfile = true
                 await supabaseService.fetchCurrentProfile()

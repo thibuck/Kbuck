@@ -3,34 +3,50 @@ import StoreKit
 
 // MARK: - Tier Feature Data Source
 
-private func features(for tierId: String) -> [String] {
+/// Maps a StoreKit product ID to the `tier_name` key used in `subscription_tiers_kbuck`.
+private func tierKey(for productId: String) -> String {
+    switch productId {
+    case "com.kbuck.silver.monthly":   return "silver"
+    case "com.kbuck.gold.monthly":     return "gold"
+    case "com.kbuck.platinum.monthly": return "platinum"
+    default:                            return "free"
+    }
+}
+
+/// Builds the feature bullet list for a given product/tier.
+/// Reads DB integers strictly — only renders "Unlimited" when the stored value is >= 999999.
+private func features(for tierId: String, configs: [String: TierConfig]) -> [String] {
+    let key = tierKey(for: tierId)
+    let cfg = configs[key]
+
+    func extractionStr(_ n: Int) -> String {
+        n >= 999999 ? "Unlimited daily HPD extractions" : "\(n) daily HPD extractions"
+    }
+    func favoritesStr(_ n: Int) -> String {
+        n >= 999999 ? "Unlimited favorites" : "Save up to \(n) favorites"
+    }
+
     switch tierId {
     case "free":
-        return [
-            "3 daily HPD extractions",
-            "Save up to 3 favorites",
-            "Basic auction access"
-        ]
+        let fetches = cfg.map { extractionStr($0.daily_fetch_limit) } ?? "3 daily HPD extractions"
+        let favs    = cfg.map { favoritesStr($0.max_favorites) }       ?? "Save up to 3 favorites"
+        return [fetches, favs, "Basic auction access"]
+
     case "com.kbuck.silver.monthly":
-        return [
-            "20 daily HPD extractions",
-            "Save up to 15 favorites",
-            "Standard push notifications"
-        ]
+        let fetches = cfg.map { extractionStr($0.daily_fetch_limit) } ?? "10 daily HPD extractions"
+        let favs    = cfg.map { favoritesStr($0.max_favorites) }       ?? "Save up to 10 favorites"
+        return [fetches, favs, "Standard push notifications"]
+
     case "com.kbuck.gold.monthly":
-        return [
-            "50 daily HPD extractions",
-            "Save up to 50 favorites",
-            "Priority real-time notifications",
-            "Quick Inventory Access"
-        ]
+        let fetches = cfg.map { extractionStr($0.daily_fetch_limit) } ?? "30 daily HPD extractions"
+        let favs    = cfg.map { favoritesStr($0.max_favorites) }       ?? "Save up to 30 favorites"
+        return [fetches, favs, "Priority real-time notifications", "Quick Inventory Access"]
+
     case "com.kbuck.platinum.monthly":
-        return [
-            "Unlimited HPD extractions",
-            "Unlimited favorites",
-            "$10.99 discounted Carfax reports",
-            "Dedicated dealer dashboard"
-        ]
+        let fetches = cfg.map { extractionStr($0.daily_fetch_limit) } ?? "200 daily HPD extractions"
+        let favs    = cfg.map { favoritesStr($0.max_favorites) }       ?? "Unlimited favorites"
+        return [fetches, favs, "Discounted Carfax reports", "Dedicated dealer dashboard"]
+
     default:
         return []
     }
@@ -41,6 +57,7 @@ private func features(for tierId: String) -> [String] {
 struct PaywallView: View {
 
     @EnvironmentObject private var storeManager: StoreManager
+    @EnvironmentObject private var supabaseService: SupabaseService
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedProduct: Product? = nil
@@ -77,6 +94,8 @@ struct PaywallView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            // Refresh tier config each time the sheet opens — no restart needed
+            .task { await supabaseService.fetchTierConfigs() }
             // Auto-dismiss when a subscription activates
             .onChange(of: storeManager.purchasedSubscriptions) { _, newValue in
                 if !newValue.isEmpty { dismiss() }
@@ -124,10 +143,14 @@ struct PaywallView: View {
     // MARK: - Plans Section
 
     private var plansSection: some View {
-        VStack(spacing: 12) {
+        let configs = supabaseService.tierConfigs
+        return VStack(spacing: 12) {
 
             // Free tier baseline card — always shown at top for price anchoring
-            FreeTierCard(isCurrentPlan: isOnFreeTier)
+            FreeTierCard(
+                isCurrentPlan: isOnFreeTier,
+                features: features(for: "free", configs: configs)
+            )
 
             // Paid tiers from StoreKit, sorted by price (Silver → Gold → Platinum)
             if storeManager.subscriptions.isEmpty {
@@ -140,7 +163,7 @@ struct PaywallView: View {
                 ForEach(storeManager.subscriptions, id: \.id) { product in
                     PaidPlanCard(
                         product: product,
-                        features: features(for: product.id),
+                        features: features(for: product.id, configs: configs),
                         isSelected: selectedProduct?.id == product.id
                     )
                     .onTapGesture { selectedProduct = product }
@@ -232,8 +255,7 @@ struct PaywallView: View {
 
 private struct FreeTierCard: View {
     let isCurrentPlan: Bool
-
-    private let freeFeatures = features(for: "free")
+    let features: [String]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -261,7 +283,7 @@ private struct FreeTierCard: View {
 
             Divider()
 
-            ForEach(freeFeatures, id: \.self) { feature in
+            ForEach(features, id: \.self) { feature in
                 Label(feature, systemImage: "checkmark")
                     .font(.subheadline)
                     .foregroundStyle(.primary)
@@ -383,4 +405,5 @@ private struct PaidPlanCard: View {
 #Preview {
     PaywallView()
         .environmentObject(StoreManager())
+        .environmentObject(SupabaseService())
 }

@@ -31,6 +31,36 @@ struct HomeSummaryView: View {
 
     @State private var expandedDates: Set<String> = []
 
+    @EnvironmentObject private var supabaseService: SupabaseService
+    @EnvironmentObject private var storeManager: StoreManager
+    @AppStorage("userRole") private var userRole: String = "user"
+    @State private var showTierDetailsAlert: Bool = false
+
+    private var currentTierKey: String {
+        supabaseService.currentProfile?.plan_tier?.lowercased() ?? storeManager.activeSubscriptionTier.tierKey
+    }
+
+    private var currentTierDisplayName: String {
+        currentTierKey.capitalized
+    }
+
+    private var currentTierLimit: Int {
+        if let remoteLimit = supabaseService.tierConfigs[currentTierKey]?.daily_fetch_limit {
+            return remoteLimit
+        }
+
+        switch currentTierKey {
+        case "silver":
+            return 10
+        case "gold":
+            return 30
+        case "platinum":
+            return 200
+        default:
+            return 3
+        }
+    }
+
     // MARK: - Address normalisation (mirrors HPDView.sanitizedAddressForMaps + streetNumberKey)
 
     private static func normalizeAddress(_ raw: String) -> String {
@@ -172,6 +202,27 @@ struct HomeSummaryView: View {
                             .foregroundStyle(.primary)
                     }
                 }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        showTierDetailsAlert = true
+                    } label: {
+                        if UIImage(named: currentTierKey) != nil {
+                            Image(currentTierKey)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 30, height: 30)
+                        } else {
+                            Image(systemName: "star.shield.fill")
+                                .font(.title2)
+                        }
+                    }
+                }
+            }
+            .alert("Current Plan", isPresented: $showTierDetailsAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                let limitDisplay = userRole == "super_admin" ? "Unlimited" : "\(currentTierLimit)"
+                Text("You are currently on the \(currentTierDisplayName) plan, which grants \(limitDisplay) daily HPD extractions.")
             }
         }
         .task {
@@ -226,10 +277,11 @@ struct HomeSummaryView: View {
 
                 ForEach(card.locations) { locEntry in
                     VStack(alignment: .leading, spacing: 8) {
-                        Button {
-                            targetLocationFilter = locEntry.location
-                            selectedTab = 1
-                        } label: {
+                        NavigationLink(destination: FilteredAuctionListView(
+                            date: card.date,
+                            location: locEntry.location,
+                            brand: nil
+                        )) {
                             HStack(alignment: .top, spacing: 8) {
                                 Image(systemName: "mappin.and.ellipse")
                                     .foregroundColor(.accentColor)
@@ -251,9 +303,13 @@ struct HomeSummaryView: View {
                         }
                         .buttonStyle(.plain)
 
-                        DisclosureGroup("View Brands") {
-                            VStack(spacing: 6) {
-                                ForEach(locEntry.makes, id: \.make) { makeEntry in
+                        VStack(spacing: 6) {
+                            ForEach(locEntry.makes, id: \.make) { makeEntry in
+                                NavigationLink(destination: FilteredAuctionListView(
+                                    date: card.date,
+                                    location: locEntry.location,
+                                    brand: makeEntry.make
+                                )) {
                                     HStack(spacing: 8) {
                                         if let asset = brandAssetName(for: makeEntry.make),
                                            let img = UIImage(named: asset) {
@@ -266,21 +322,25 @@ struct HomeSummaryView: View {
                                                 .frame(width: 20, height: 20)
                                                 .foregroundStyle(.secondary)
                                         }
-                                        Text(makeEntry.make)
+                                        Text(brandDisplayName(for: makeEntry.make))
                                             .font(.subheadline)
                                             .foregroundStyle(.primary)
                                         Spacer()
-                                        Text("\(makeEntry.count)")
-                                            .font(.subheadline)
-                                            .foregroundStyle(.secondary)
+                                        HStack(spacing: 4) {
+                                            Text("\(makeEntry.count)")
+                                                .font(.subheadline)
+                                                .foregroundStyle(.secondary)
+                                            Image(systemName: "chevron.right")
+                                                .font(.caption2.bold())
+                                                .foregroundStyle(.tertiary)
+                                        }
                                     }
                                     .padding(.leading, 4)
                                 }
+                                .buttonStyle(.plain)
                             }
-                            .padding(.top, 4)
                         }
-                        .font(.caption)
-                        .tint(.accentColor)
+                        .padding(.top, 4)
                     }
                     .padding(.top, 12)
 

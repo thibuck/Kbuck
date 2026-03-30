@@ -26,6 +26,14 @@ let supabase = SupabaseClient(
 
 
 
+// MARK: - Remote Tier Config
+
+struct TierConfig: Codable {
+    let tier_name: String
+    let daily_fetch_limit: Int
+    let max_favorites: Int
+}
+
 // MARK: - Rate Limit Response
 
 struct RateLimitResponse: Codable {
@@ -38,6 +46,64 @@ struct RateLimitResponse: Codable {
 struct UserUsageProfile: Codable {
     let scrape_count_today: Int
     let last_scrape_reset: String?
+    let plan_tier: String?
+
+    /// Client-side timezone-aware quota count.
+    ///
+    /// Supabase performs a *lazy* reset: `scrape_count_today` is only zeroed
+    /// the next time the user makes an extraction, not at midnight.
+    /// If the stored `last_scrape_reset` date (parsed in the America/Chicago /
+    /// Texas timezone) falls strictly before today in that same timezone,
+    /// the DB value is stale and we return 0 so the UI always shows the truth.
+    /// Falls back to the raw `scrape_count_today` if date parsing fails.
+    var effectiveScrapeCount: Int {
+        guard let raw = last_scrape_reset else { return scrape_count_today }
+
+        // Normalise the Supabase timestamp — it may contain a space instead of 'T'
+        let normalized = raw.replacingOccurrences(of: " ", with: "T")
+        var resetDate: Date?
+
+        // 1. ISO8601 with fractional seconds + timezone
+        let isoFull = ISO8601DateFormatter()
+        isoFull.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        resetDate = isoFull.date(from: normalized)
+
+        // 2. ISO8601 without fractional seconds
+        if resetDate == nil {
+            let isoBasic = ISO8601DateFormatter()
+            isoBasic.formatOptions = [.withInternetDateTime]
+            resetDate = isoBasic.date(from: normalized)
+        }
+
+        // 3. Manual fallback formats (Supabase sometimes omits the 'T')
+        if resetDate == nil {
+            let df = DateFormatter()
+            df.locale   = Locale(identifier: "en_US_POSIX")
+            df.timeZone = TimeZone(secondsFromGMT: 0)
+            for fmt in [
+                "yyyy-MM-dd'T'HH:mm:ss.SSSSSSZZZZZ",
+                "yyyy-MM-dd'T'HH:mm:ss.SSSZZZZZ",
+                "yyyy-MM-dd'T'HH:mm:ssZZZZZ",
+                "yyyy-MM-dd HH:mm:ssZZZZZ",
+                "yyyy-MM-dd HH:mm:ss",
+                "yyyy-MM-dd"
+            ] {
+                df.dateFormat = fmt
+                if let d = df.date(from: raw) { resetDate = d; break }
+            }
+        }
+
+        guard let resetDate else { return scrape_count_today }
+
+        // Compare calendar *days* in America/Chicago — the server's reset boundary
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "America/Chicago")!
+        let todayStart = cal.startOfDay(for: Date())
+        let resetStart = cal.startOfDay(for: resetDate)
+
+        // If the reset day predates today (CT) the DB hasn't lazy-reset yet → show 0
+        return resetStart < todayStart ? 0 : scrape_count_today
+    }
 }
 
 // MARK: - Favorites Table Row Model
@@ -61,6 +127,7 @@ struct FavoriteRow: Codable {
     @Published private(set) var favorites: Set<String> = []
     @Published private(set) var odoByVIN: [String: OdoInfo] = [:]
     @Published private(set) var currentProfile: UserUsageProfile? = nil
+    @Published private(set) var tierConfigs: [String: TierConfig] = [:]
 
     // UserDefaults keys (same as the old @AppStorage keys so data migrates automatically)
     private let favKey  = "hpdFavorites"
@@ -84,6 +151,8 @@ struct FavoriteRow: Codable {
             for (k, v) in decoded { migrated[normalizeVIN(k)] = v }
             odoByVIN = migrated
         }
+        // Fetch tier config immediately — non-blocking, drives dynamic UI limits
+        Task { await fetchTierConfigs() }
     }
 
     // MARK: - Local state mutations (called directly by HPDView for instant UI updates)
@@ -375,6 +444,26 @@ struct FavoriteRow: Codable {
 
     private func persistOdo() {
         UserDefaults.standard.set(try? JSONEncoder().encode(odoByVIN), forKey: odoKey)
+    }
+
+    // MARK: - Remote Tier Config
+
+    /// Fetches subscription_tiers_kbuck and populates tierConfigs.
+    /// Called on init and again whenever Settings or PaywallView opens
+    /// to guarantee limits are always in sync with the database.
+    func fetchTierConfigs() async {
+        do {
+            let rows: [TierConfig] = try await supabase
+                .from("subscription_tiers_kbuck")
+                .select()
+                .execute()
+                .value
+            let mapped = Dictionary(uniqueKeysWithValues: rows.map { ($0.tier_name, $0) })
+            tierConfigs = mapped
+            print("✅ TIER CONFIGS: Loaded \(mapped.count) tier(s) from remote")
+        } catch {
+            print("🔴 fetchTierConfigs failed: \(error)")
+        }
     }
 
     // MARK: - User Usage Profile

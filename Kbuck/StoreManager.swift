@@ -1,6 +1,7 @@
 import Foundation
 import StoreKit
 import Combine
+import Supabase
 
 @MainActor
 final class StoreManager: ObservableObject {
@@ -54,8 +55,18 @@ final class StoreManager: ObservableObject {
             }
         }
 
-        /// HPD searches included per month for each tier
-        var hpdSearchLimit: Int {
+        /// Lowercase key matching the `tier_name` column in `subscription_tiers_kbuck`.
+        var tierKey: String {
+            switch self {
+            case .silver:   return "silver"
+            case .gold:     return "gold"
+            case .platinum: return "platinum"
+            case .none:     return "free"
+            }
+        }
+
+        /// Static fallback — used only when remote tierConfigs has not yet loaded.
+        fileprivate var fallbackDailyLimit: Int {
             switch self {
             case .silver:   return 10
             case .gold:     return 30
@@ -63,6 +74,18 @@ final class StoreManager: ObservableObject {
             case .none:     return 3
             }
         }
+    }
+
+    // MARK: - Dynamic Limit Resolver
+
+    /// Resolves the daily fetch limit for the active tier.
+    /// Prefers the remote `tierConfigs` value; falls back to static defaults when configs
+    /// have not yet been fetched (e.g., first launch before network call completes).
+    /// Platinum is always treated as unlimited (Int.max) regardless of DB value.
+    func dailyLimit(from configs: [String: TierConfig]) -> Int {
+        guard activeSubscriptionTier != .platinum else { return Int.max }
+        let key = activeSubscriptionTier.tierKey
+        return configs[key]?.daily_fetch_limit ?? activeSubscriptionTier.fallbackDailyLimit
     }
 
     // MARK: - Transaction Listener
@@ -164,8 +187,17 @@ final class StoreManager: ObservableObject {
         switch result {
         case .success(let verificationResult):
             let transaction = try checkVerified(verificationResult)
-            await updateCustomerProductStatus()
+
+            // 1. CRITICAL: Update Supabase FIRST and wait for confirmation.
+            //    This blocks the purchase flow until the DB reflects the new tier,
+            //    preventing can_extract_data RPC from seeing a stale entitlement.
+            await syncPlanToSupabase(productID: product.id)
+
+            // 2. Finish the transaction with Apple.
             await transaction.finish()
+
+            // 3. Update local UI state (this triggers Paywall dismissal via onChange).
+            await updateCustomerProductStatus()
             return true
 
         case .userCancelled:
@@ -176,6 +208,29 @@ final class StoreManager: ObservableObject {
 
         @unknown default:
             throw PurchaseError.unknown
+        }
+    }
+
+    // MARK: - Supabase Plan Sync
+
+    private func syncPlanToSupabase(productID: String) async {
+        let tier: String
+        if productID.contains("platinum") { tier = "platinum" }
+        else if productID.contains("gold") { tier = "gold" }
+        else if productID.contains("silver") { tier = "silver" }
+        else { return }
+
+        guard let uid = supabase.auth.currentUser?.id else { return }
+
+        do {
+            try await supabase
+                .from("profiles_kbuck")
+                .update(["plan_tier": tier])
+                .eq("id", value: uid.uuidString)
+                .execute()
+            print("✅ SUPABASE SYNCED: User is now \(tier)")
+        } catch {
+            print("🔴 SUPABASE SYNC ERROR: \(error)")
         }
     }
 

@@ -668,6 +668,18 @@ private struct HPDFilterSheet: View {
 struct WelcomeOnboardingView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("hideWelcomeScreen") private var hideWelcomeScreen: Bool = false
+    @EnvironmentObject private var supabaseService: SupabaseService
+    @EnvironmentObject private var storeManager: StoreManager
+    @AppStorage("userRole") private var userRole: String = "user"
+
+    private var dynamicLimitDisplay: String {
+        if userRole == "super_admin" { return "Unlimited" }
+        // Prefer Supabase profile tier; fall back to StoreKit local state during network latency
+        let fallbackTierKey = storeManager.activeSubscriptionTier.tierKey
+        let tierName = supabaseService.currentProfile?.plan_tier ?? fallbackTierKey
+        let limit = supabaseService.tierConfigs[tierName.lowercased()]?.daily_fetch_limit ?? 3
+        return limit >= 999999 ? "Unlimited" : "\(limit)"
+    }
 
     var body: some View {
         ScrollView {
@@ -692,7 +704,7 @@ struct WelcomeOnboardingView: View {
                     featureRow(
                         icon: "chart.bar.fill", color: .green,
                         title: "Fair-Use Quota",
-                        description: "Get up to 50 successful data extractions per day. Failed attempts do not consume your quota."
+                        description: "Get up to \(dynamicLimitDisplay) successful data extractions per day. Failed attempts do not consume your quota."
                     )
                 }
 
@@ -1449,6 +1461,7 @@ struct HPDView: View {
     @State private var extractionCancelToken = UUID()
     @State private var extractionErrorMessage: String? = nil
     @State private var showExtractionErrorAlert: Bool = false
+    @State private var isQuotaExceededAlert: Bool = false
     @State private var mileageForceStartToken = UUID()
 
     // Tracking which card is running and which finished last
@@ -1481,6 +1494,7 @@ struct HPDView: View {
     @State private var showCarfaxTeaser: Bool = false
     @State private var showCarfaxUpsellDialog: Bool = false
     @State private var showPaywall: Bool = false
+    @State private var showTierDetailsAlert: Bool = false
     @State private var pendingMapAddress: String = ""
     @State private var pendingMapTime: String = ""
     @State private var selectedAddressForMap: String = ""
@@ -2504,6 +2518,35 @@ struct HPDView: View {
         .onChange(of: supabaseService.odoByVIN) { _, _ in
             recomputeFilteredEntries()
         }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showTierDetailsAlert = true
+                } label: {
+                    let tierKey = supabaseService.currentProfile?.plan_tier?.lowercased()
+                                  ?? storeManager.activeSubscriptionTier.tierKey
+                    if UIImage(named: tierKey) != nil {
+                        Image(tierKey)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 30, height: 30)
+                    } else {
+                        Image(systemName: "star.shield.fill")
+                            .font(.title2)
+                    }
+                }
+            }
+        }
+        .alert("Current Plan", isPresented: $showTierDetailsAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            let fallbackTierKey = storeManager.activeSubscriptionTier.tierKey
+            let tierName = supabaseService.currentProfile?.plan_tier ?? fallbackTierKey
+            let isUnlimited = userRole == "super_admin" || storeManager.activeSubscriptionTier == .platinum
+            let limit = storeManager.dailyLimit(from: supabaseService.tierConfigs)
+            let limitDisplay = isUnlimited ? "Unlimited" : "\(limit)"
+            Text("You are currently on the \(tierName.capitalized) plan, which grants \(limitDisplay) daily HPD extractions.")
+        }
     }
 
     var body: some View {
@@ -2517,6 +2560,9 @@ struct HPDView: View {
             }
             .sheet(isPresented: $showPaywall) {
                 PaywallView()
+                    .onChange(of: storeManager.purchasedSubscriptions) { _, _ in
+                        Task { await supabaseService.fetchCurrentProfile() }
+                    }
             }
 
             if extractionState != .idle {
@@ -2546,7 +2592,7 @@ struct HPDView: View {
                             Text(extractionOverlayMessage)
                                 .font(.headline)
                             if let vin = lastProcessingVIN {
-                                Text("VIN: \(vin)")
+                                Text((vin))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -2684,9 +2730,17 @@ struct HPDView: View {
         } message: {
             Text(extractionError ?? "")
         }
-        .alert("Extraction Failed", isPresented: $showExtractionErrorAlert) {
-            Button("OK", role: .cancel) {
+        .alert(isQuotaExceededAlert ? "Daily Limit Reached" : "Extraction Failed", isPresented: $showExtractionErrorAlert) {
+            Button("Cancel", role: .cancel) {
                 extractionErrorMessage = nil
+                isQuotaExceededAlert = false
+            }
+            if isQuotaExceededAlert {
+                Button("Upgrade Now") {
+                    extractionErrorMessage = nil
+                    isQuotaExceededAlert = false
+                    showPaywall = true
+                }
             }
         } message: {
             Text(extractionErrorMessage ?? "An unknown error occurred.")
@@ -2729,7 +2783,10 @@ struct HPDView: View {
         .alert("Data Information", isPresented: $showQuickDataInfo) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("• Mileage: Last recorded odometer during state inspection.\n• Value: Estimated DMV Private Party Value.\n\nUSAGE LIMITS:\nTo ensure system stability, you are limited to 50 successful data extractions per day, and a maximum of 5 successful extractions per specific vehicle. Failed attempts do not count against your limit.\n\nNOTE: This is historical data from third-party public records. We do not guarantee its accuracy.")
+            let isUnlimited = userRole == "super_admin" || storeManager.activeSubscriptionTier == .platinum
+            let limit = storeManager.dailyLimit(from: supabaseService.tierConfigs)
+            let limitStr = isUnlimited ? "unlimited" : "\(limit)"
+            Text("• Mileage: Last recorded odometer during state inspection.\n• Value: Estimated DMV Private Party Value.\n\nUSAGE LIMITS:\nTo ensure system stability, you are limited to \(limitStr) successful data extractions per day, and a maximum of 5 successful extractions per specific vehicle. Failed attempts do not count against your limit.\n\nNOTE: This is historical data from third-party public records. We do not guarantee its accuracy.")
         }
         .alert("Carfax Report", isPresented: $showCarfaxTeaser) {
             Button("Cancel", role: .cancel) { }
@@ -2739,15 +2796,19 @@ struct HPDView: View {
         } message: {
             Text("Carfax reports are available exclusively for Platinum Plans. Upgrade your account to unlock this feature.")
         }
-        .confirmationDialog("Carfax Report", isPresented: $showCarfaxUpsellDialog, titleVisibility: .visible) {
-            Button("Buy 1 Report for $15.99") {
+        .alert("Carfax Report", isPresented: $showCarfaxUpsellDialog) {
+            let stdProduct  = storeManager.consumables.first(where: { $0.id == "com.kbuck.carfax.standard" })
+            let platProduct = storeManager.consumables.first(where: { $0.id == "com.kbuck.carfax.platinum" })
+            let stdPrice    = stdProduct?.displayPrice  ?? "$15.99"
+            let platPrice   = platProduct?.displayPrice ?? "$10.99"
+            Button("Buy 1 Report for \(stdPrice)") {
                 Task {
-                    if let standardProduct = storeManager.consumables.first(where: { $0.id == "com.kbuck.carfax.standard" }) {
-                        _ = try? await storeManager.purchase(standardProduct)
+                    if let product = stdProduct {
+                        _ = try? await storeManager.purchase(product)
                     }
                 }
             }
-            Button("Upgrade to Platinum (Reports for $10.99)") {
+            Button("Upgrade to Platinum (Reports for \(platPrice))") {
                 showPaywall = true
             }
             Button("Cancel", role: .cancel) { }
@@ -3149,255 +3210,7 @@ struct HPDView: View {
     }
 
     @ViewBuilder private func card(for e: HPDEntry, showAddress: Bool = true) -> some View {
-        let cardKey   = normalizeVIN(e.vin)
-        let isFav     = supabaseService.favorites.contains(cardKey)
-        let processed = lastProcessedVIN == cardKey
-        let expanded  = expandedLocationIDs.contains(e.id)
-        let odoInfo   = supabaseService.odoByVIN[e.vin] ?? supabaseService.odoByVIN[cardKey]
-        let yearStr   = normalizedYear(e.year)
-        let entry = e
-        let shareText: String = {
-            var parts = ["\(yearStr) \(e.make) \(e.model)", "VIN: \(e.vin)"]
-            if let odo = odoInfo {
-                parts.append("Miles: \(odo.odometer.formatWithCommas())")
-                let price = odo.privateValue.formatAsCurrency()
-                if price != "N/A" { parts.append("Value: \(price)") }
-            }
-            return parts.joined(separator: "\n")
-        }()
-
-        VStack(alignment: .leading, spacing: 8) {
-
-            // MARK: Header (always visible) — tap anywhere to expand/collapse
-            HStack(alignment: .center, spacing: 10) {
-                if let asset = brandAssetName(for: e.make) {
-                    Image(asset)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 44, height: 28)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("\(yearStr) \(e.make) \(e.model)".uppercased())
-                        .font(.headline)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.82)
-
-                    let rawAddress = e.lotAddress.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let rawName = e.lotName.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let isValidAddress = rawAddress.count > 5
-                        && !rawAddress.lowercased().elementsEqual("llc")
-                        && !rawAddress.lowercased().elementsEqual("inc")
-                    let displayAddr: String = {
-                        if isValidAddress {
-                            let mapped = sanitizedAddressForMaps(rawAddress)
-                            return mapped.isEmpty ? rawAddress : mapped
-                        } else {
-                            return rawName.count > 3 ? rawName : "Location Unavailable"
-                        }
-                    }()
-
-                    if showAddress {
-                        Text(displayAddr)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-                Spacer(minLength: 4)
-                if let info = odoInfo {
-                    let odoK = formatOdoK(info.odometer)
-                    if odoK != "no odo" {
-                        HStack(spacing: 4) {
-                            Image(systemName: "fuelpump.fill")
-                                .foregroundStyle(.secondary)
-                                .font(.headline)
-                            Text(odoK)
-                                .font(.headline)
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                Button {
-                    hapticImpact(.light)
-                    if isFav {
-                        supabaseService.removeFavoriteLocally(cardKey)
-                        supabaseService.syncRemoveFavorite(cardKey)
-                    } else {
-                        pendingFavoriteKey   = cardKey
-                        pendingFavoriteEntry = e
-                        pendingFavoriteLabel = "\(yearStr) \(e.make) \(e.model) - \(e.vin)"
-                        showFavoriteConfirm  = true
-                    }
-                } label: {
-                    Image(systemName: "star.fill")
-                        .font(.title2)
-                        .foregroundStyle(isFav ? AnyShapeStyle(.yellow) : AnyShapeStyle(.secondary))
-                }
-                .buttonStyle(.plain)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                hapticImpact(.light)
-                if expandedLocationIDs.contains(e.id) {
-                    expandedLocationIDs.remove(e.id)
-                } else {
-                    expandedLocationIDs.insert(e.id)
-                }
-            }
-
-            // MARK: Expanded content
-            if expanded {
-                Divider()
-
-                // VIN row — tap to copy, no button icon
-                HStack(spacing: 6) {
-                    Image(systemName: "tag.fill")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Text("VIN: \(entry.vin)")
-                        .font(.subheadline)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                    if copiedVIN == e.vin {
-                        Text("Copied!")
-                            .font(.caption)
-                            .foregroundStyle(.green)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    UIPasteboard.general.string = e.vin
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
-                    copiedVIN = e.vin
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 2_000_000_000)
-                        copiedVIN = nil
-                    }
-                }
-                .overlay(alignment: .trailing) {
-                    Button {
-                        if storeManager.activeSubscriptionTier == .platinum || userRole == "super_admin" {
-                            // Platinum/admin: discounted Carfax rate
-                            Task {
-                                if let platinumCarfax = storeManager.consumables.first(where: { $0.id == "com.kbuck.carfax.platinum" }) {
-                                    _ = try? await storeManager.purchase(platinumCarfax)
-                                }
-                            }
-                        } else {
-                            // All other tiers: show dual-price upsell dialog
-                            showCarfaxUpsellDialog = true
-                        }
-                    } label: {
-                        Image("carfax")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 32, height: 32)
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                // Odometer, inspection date, private value
-                if let odo = odoInfo {
-                    HStack(spacing: 6) {
-                        Image(systemName: "fuelpump.fill")
-                            .foregroundStyle(.secondary)
-                        Text(odo.odometer.formatWithCommas() + " miles")
-                    }
-                    HStack(spacing: 6) {
-                        Image(systemName: "clock.fill")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Text("\(odo.testDate.dateOnly) \(odo.testDate.dateOnly.timeAgoShort())")
-                    }
-                    HStack(spacing: 6) {
-                        Image(systemName: "banknote.fill")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Text(odo.privateValue.formatAsCurrency())
-                    }
-                }
-
-                // Action buttons
-                HStack(spacing: 8) {
-                    Button {
-                        let failStatus = VINFailureTracker.shared.status(for: normalizeVIN(e.vin))
-                        if !failStatus.canTry {
-                            UINotificationFeedbackGenerator().notificationOccurred(.error)
-                            extractionErrorMessage = failStatus.errorMessage
-                            showExtractionErrorAlert = true
-                            return
-                        }
-                        Task {
-                            let limitStatus = await supabaseService.checkExtractionLimits(vin: normalizeVIN(e.vin))
-                            await MainActor.run {
-                                if limitStatus.allowed {
-                                    hapticImpact(.medium)
-                                    pendingExtractionEntry = e
-                                    showLegalDisclaimer = true
-                                } else {
-                                    UINotificationFeedbackGenerator().notificationOccurred(.error)
-                                    showPaywall = true
-                                }
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "hammer.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(VINFailureTracker.shared.status(for: normalizeVIN(e.vin)).isRed ? .red : .blue)
-                    .disabled(flowInProgress)
-                    .frame(maxWidth: .infinity)
-
-                    ShareLink(item: shareText) {
-                        Image(systemName: "square.and.arrow.up.fill")
-                    }
-                    .buttonStyle(.bordered)
-                    .frame(maxWidth: .infinity)
-
-                    Button {
-                        hapticImpact(.light)
-                        pendingCalendarEntry = e
-                        pendingCalendarLabel = "\(yearStr) \(e.make) \(e.model) — \(e.dateScheduled)"
-                        showCalendarConfirm  = true
-                    } label: {
-                        Image(systemName: "calendar.badge.plus")
-                    }
-                    .buttonStyle(.bordered)
-                    .frame(maxWidth: .infinity)
-
-                    Button {
-                        hapticImpact(.light)
-                        webVIN         = e.vin
-                        showWebConfirm = true
-                    } label: {
-                        Image(systemName: "globe")
-                    }
-                    .buttonStyle(.bordered)
-                    .frame(maxWidth: .infinity)
-
-                    Button {
-                        showQuickDataInfo = true
-                    } label: {
-                        Image(systemName: "info.circle.fill")
-                    }
-                    .buttonStyle(.bordered)
-                    .frame(maxWidth: .infinity)
-                }
-            }
-            }
-            .font(.system(.subheadline))
-            .foregroundStyle(.primary)
-            .padding(16)
-            .background(Color(uiColor: .secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(processed ? Color.blue.opacity(0.4) : Color.clear, lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
+        VehicleCardView(entry: e, showAddress: showAddress)
     }
 
     private var extractionOverlayMessage: String {
