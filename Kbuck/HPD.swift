@@ -10,7 +10,26 @@ import Supabase
 import StoreKit
 
 
-struct SafariView: UIViewControllerRepresentable {
+struct SafariView: View {
+    let url: URL
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            SafariControllerView(url: url)
+                .ignoresSafeArea()
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") {
+                            dismiss()
+                        }
+                    }
+                }
+        }
+    }
+}
+
+private struct SafariControllerView: UIViewControllerRepresentable {
     let url: URL
 
     func makeUIViewController(context: Context) -> SFSafariViewController {
@@ -2628,8 +2647,8 @@ struct HPDView: View {
                         if let v = spvVIN, var info = supabaseService.odoByVIN[v] {
                             info.privateValue = price
                             supabaseService.setOdoInfo(info, forVIN: v)
-                            Task { await supabaseService.incrementQuota() }
                             VINFailureTracker.shared.clearFailures(vin: v)
+                            Task { await supabaseService.incrementQuota() }
                             lastProcessedVIN = v
                         }
                         lastProcessingVIN = nil

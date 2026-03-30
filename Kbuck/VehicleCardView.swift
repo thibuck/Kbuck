@@ -48,8 +48,11 @@ struct VehicleCardView: View {
     @State private var pendingCalendarLabel = ""
 
     // Web / stat.vin
-    @State private var showWebConfirm = false
+    @State private var showWebAlert = false
     @State private var statVinURL: URL? = nil
+
+    // Calendar completion
+    @State private var isAddedToCalendar = false
 
     // Quick Data Info
     @State private var showQuickDataInfo = false
@@ -239,51 +242,53 @@ struct VehicleCardView: View {
                 // Action buttons
                 HStack(spacing: 8) {
                     // Hammer — extraction trigger
-                    Button {
-                        let failStatus = VINFailureTracker.shared.status(for: cardKey)
-                        if !failStatus.canTry {
-                            UINotificationFeedbackGenerator().notificationOccurred(.error)
-                            extractionErrorMessage = failStatus.errorMessage
-                            showExtractionErrorAlert = true
-                            return
-                        }
-                        Task {
-                            let limitStatus = await supabaseService.checkExtractionLimits(vin: cardKey)
-                            await MainActor.run {
-                                if limitStatus.allowed {
-                                    haptic(.medium)
-                                    pendingExtractionEntry = entry
-                                    showLegalDisclaimer = true
-                                } else {
-                                    UINotificationFeedbackGenerator().notificationOccurred(.error)
-                                    let configs       = supabaseService.tierConfigs
-                                    let currentTier   = storeManager.activeSubscriptionTier
-                                    let currentLimit  = storeManager.dailyLimit(from: configs)
-                                    let limitStr      = currentLimit == Int.max ? "Unlimited" : "\(currentLimit)"
-                                    let (nextName, nextLimit): (String, String)
-                                    switch currentTier {
-                                    case .none:
-                                        nextName  = "Silver"
-                                        nextLimit = "\(configs["silver"]?.daily_fetch_limit ?? 10)"
-                                    case .silver:
-                                        nextName  = "Gold"
-                                        nextLimit = "\(configs["gold"]?.daily_fetch_limit ?? 30)"
-                                    case .gold, .platinum:
-                                        nextName  = "Platinum"
-                                        nextLimit = "Unlimited"
+                    if odoInfo == nil {
+                        Button {
+                            let failStatus = VINFailureTracker.shared.status(for: cardKey)
+                            if !failStatus.canTry {
+                                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                                extractionErrorMessage = failStatus.errorMessage
+                                showExtractionErrorAlert = true
+                                return
+                            }
+                            Task {
+                                let limitStatus = await supabaseService.checkExtractionLimits(vin: cardKey)
+                                await MainActor.run {
+                                    if limitStatus.allowed {
+                                        haptic(.medium)
+                                        pendingExtractionEntry = entry
+                                        showLegalDisclaimer = true
+                                    } else {
+                                        UINotificationFeedbackGenerator().notificationOccurred(.error)
+                                        let configs       = supabaseService.tierConfigs
+                                        let currentTier   = storeManager.activeSubscriptionTier
+                                        let currentLimit  = storeManager.dailyLimit(from: configs)
+                                        let limitStr      = currentLimit == Int.max ? "Unlimited" : "\(currentLimit)"
+                                        let (nextName, nextLimit): (String, String)
+                                        switch currentTier {
+                                        case .none:
+                                            nextName  = "Silver"
+                                            nextLimit = "\(configs["silver"]?.daily_fetch_limit ?? 10)"
+                                        case .silver:
+                                            nextName  = "Gold"
+                                            nextLimit = "\(configs["gold"]?.daily_fetch_limit ?? 30)"
+                                        case .gold, .platinum:
+                                            nextName  = "Platinum"
+                                            nextLimit = "Unlimited"
+                                        }
+                                        isQuotaExceededAlert     = true
+                                        extractionErrorMessage   = "You've reached your daily limit of \(limitStr). Upgrade to \(nextName) to get \(nextLimit) extractions per day!"
+                                        showExtractionErrorAlert = true
                                     }
-                                    isQuotaExceededAlert     = true
-                                    extractionErrorMessage   = "You've reached your daily limit of \(limitStr). Upgrade to \(nextName) to get \(nextLimit) extractions per day!"
-                                    showExtractionErrorAlert = true
                                 }
                             }
+                        } label: {
+                            Image(systemName: "hammer.fill")
                         }
-                    } label: {
-                        Image(systemName: "hammer.fill")
+                        .buttonStyle(.borderedProminent)
+                        .tint(VINFailureTracker.shared.status(for: cardKey).isRed ? .red : .blue)
+                        .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(VINFailureTracker.shared.status(for: cardKey).isRed ? .red : .blue)
-                    .frame(maxWidth: .infinity)
 
                     ShareLink(item: shareText) {
                         Image(systemName: "square.and.arrow.up.fill")
@@ -291,20 +296,22 @@ struct VehicleCardView: View {
                     .buttonStyle(.bordered)
                     .frame(maxWidth: .infinity)
 
-                    Button {
-                        haptic(.light)
-                        pendingCalendarEntry = entry
-                        pendingCalendarLabel = "\(yearStr) \(entry.make) \(entry.model) — \(entry.dateScheduled)"
-                        showCalendarConfirm  = true
-                    } label: {
-                        Image(systemName: "calendar.badge.plus")
+                    if !isAddedToCalendar {
+                        Button {
+                            haptic(.light)
+                            pendingCalendarEntry = entry
+                            pendingCalendarLabel = "\(yearStr) \(entry.make) \(entry.model) — \(entry.dateScheduled)"
+                            showCalendarConfirm  = true
+                        } label: {
+                            Image(systemName: "calendar.badge.plus")
+                        }
+                        .buttonStyle(.bordered)
+                        .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
-                    .frame(maxWidth: .infinity)
 
                     Button {
                         haptic(.light)
-                        showWebConfirm = true
+                        showWebAlert = true
                     } label: {
                         Image(systemName: "globe")
                     }
@@ -394,7 +401,8 @@ struct VehicleCardView: View {
             }
         }
 
-        .confirmationDialog("Open stat.vin", isPresented: $showWebConfirm, titleVisibility: .visible) {
+        .alert("Open stat.vin", isPresented: $showWebAlert) {
+            Button("Cancel", role: .cancel) {}
             Button("Open Report") {
                 if let url = URL(string: "https://stat.vin/cars/\(entry.vin)") {
                     if openWebInSafari {
@@ -404,7 +412,6 @@ struct VehicleCardView: View {
                     }
                 }
             }
-            Button("Cancel", role: .cancel) {}
         } message: { Text("Do you want to view the report for this VIN?") }
 
         .sheet(isPresented: Binding(get: { statVinURL != nil }, set: { if !$0 { statVinURL = nil } })) {
@@ -558,6 +565,7 @@ struct VehicleCardView: View {
                 do {
                     try store.save(event, span: .thisEvent)
                     DispatchQueue.main.async {
+                        isAddedToCalendar = true
                         UINotificationFeedbackGenerator().notificationOccurred(.success)
                         let ti = Int(event.startDate.timeIntervalSinceReferenceDate)
                         if let url = URL(string: "calshow:\(ti)") {
@@ -748,8 +756,8 @@ struct ExtractionFlowView: View {
             if let v = spvVIN, var info = supabaseService.odoByVIN[v] {
                 info.privateValue = price
                 supabaseService.setOdoInfo(info, forVIN: v)
-                Task { await supabaseService.incrementQuota() }
                 VINFailureTracker.shared.clearFailures(vin: v)
+                Task { await supabaseService.incrementQuota() }
                 lastProcessedVIN = v
             }
             dismiss()
