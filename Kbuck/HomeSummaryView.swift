@@ -5,6 +5,7 @@ import SwiftUI
 private struct LocationEntry: Identifiable {
     let id       = UUID()
     let location: String
+    let vehicles: [HPDEntry]
     let count:    Int
     let makes:    [(make: String, count: Int)]   // sorted by count desc
 }
@@ -24,6 +25,7 @@ struct HomeSummaryView: View {
     @Binding var targetLocationFilter: String?
 
     @AppStorage("hpdCachedEntries") private var hpdCachedEntriesData: Data = Data()
+    @AppStorage("hpdRefreshTrigger") private var hpdRefreshTrigger: Int = 0
     @State private var cachedGroupedSummaries: [DateCard] = []
     @State private var cachedActiveVehicleCount: Int = 0
 
@@ -38,6 +40,13 @@ struct HomeSummaryView: View {
 
     private var currentTierKey: String {
         supabaseService.currentProfile?.plan_tier?.lowercased() ?? storeManager.activeSubscriptionTier.tierKey
+    }
+
+    private var toolbarTierKey: String? {
+        guard let rawTier = supabaseService.currentTier else { return nil }
+        let normalized = rawTier.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty, normalized != "loading" else { return nil }
+        return normalized
     }
 
     private var currentTierDisplayName: String {
@@ -116,6 +125,7 @@ struct HomeSummaryView: View {
 
         var dateMap:  [String: [String: [String: Int]]] = [:]
         var labelMap: [String: String]                  = [:]
+        var vehicleMap: [String: [String: [HPDEntry]]]  = [:]
 
         for entry in entries {
             // Mirror HPDView: skip entries whose auction date has already passed
@@ -135,6 +145,7 @@ struct HomeSummaryView: View {
             }
 
             dateMap[date, default: [:]][skey, default: [:]][makeKey, default: 0] += 1
+            vehicleMap[date, default: [:]][skey, default: []].append(entry)
         }
 
         return dateMap
@@ -148,7 +159,12 @@ struct HomeSummaryView: View {
                         let makes = makeHistogram
                             .sorted { $0.value > $1.value }
                             .map { (make: $0.key, count: $0.value) }
-                        return LocationEntry(location: label, count: total, makes: makes)
+                        return LocationEntry(
+                            location: label,
+                            vehicles: vehicleMap[dateStr]?[skey] ?? [],
+                            count: total,
+                            makes: makes
+                        )
                     }
                     .sorted { $0.count > $1.count }
 
@@ -188,6 +204,9 @@ struct HomeSummaryView: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 20)
                     }
+                    .refreshable {
+                        hpdRefreshTrigger += 1
+                    }
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
@@ -206,14 +225,20 @@ struct HomeSummaryView: View {
                     Button {
                         showQuotaSheet = true
                     } label: {
-                        if UIImage(named: currentTierKey) != nil {
-                            Image(currentTierKey)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: 30, height: 30)
+                        if let currentTier = toolbarTierKey {
+                            if UIImage(named: currentTier) != nil {
+                                Image(currentTier)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(width: 30, height: 30)
+                            } else {
+                                Image(systemName: "star.shield.fill")
+                                    .font(.title2)
+                            }
                         } else {
-                            Image(systemName: "star.shield.fill")
-                                .font(.title2)
+                            ProgressView()
+                                .controlSize(.small)
+                                .frame(width: 30, height: 30)
                         }
                     }
                 }
@@ -228,6 +253,9 @@ struct HomeSummaryView: View {
         }
         .task {
             recomputeSummaries()
+            if supabaseService.currentTier == nil {
+                await supabaseService.fetchCurrentProfile()
+            }
         }
         .onChange(of: hpdCachedEntriesData) { _, _ in
             recomputeSummaries()
@@ -283,22 +311,30 @@ struct HomeSummaryView: View {
                             location: locEntry.location,
                             brand: nil
                         )) {
+                            let headerAuctionDate = locEntry.vehicles.compactMap { parseAuctionDate($0.dateScheduled, timeStr: $0.time) }.first
                             HStack(alignment: .top, spacing: 8) {
                                 Image(systemName: "mappin.and.ellipse")
-                                    .foregroundColor(.accentColor)
+                                    .foregroundColor(.blue)
                                     .font(.subheadline)
                                     .padding(.top, 2)
                                 Text(locEntry.location)
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(.primary)
                                     .lineLimit(2)
+                                if let headerAuctionDate = headerAuctionDate {
+                                    Text("•")
+                                        .foregroundColor(.primary)
+                                    Text(headerAuctionDate.compactAuctionTime())
+                                        .font(.subheadline.bold())
+                                        .foregroundColor(.primary)
+                                }
                                 Spacer()
                                 Text("\(locEntry.count) vehicle\(locEntry.count == 1 ? "" : "s")")
                                     .font(.caption.bold())
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 4)
-                                    .background(Color.accentColor.opacity(0.1))
-                                    .foregroundColor(.accentColor)
+                                    .background(Color.blue)
+                                    .foregroundColor(.white)
                                     .clipShape(Capsule())
                             }
                         }

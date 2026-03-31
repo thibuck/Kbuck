@@ -154,11 +154,16 @@ struct PaywallView: View {
 
             // Paid tiers from StoreKit, sorted by price (Silver → Gold → Platinum)
             if storeManager.subscriptions.isEmpty {
-                ContentUnavailableView(
-                    "Plans Unavailable",
-                    systemImage: "wifi.exclamationmark",
-                    description: Text("Could not load subscription plans. Check your connection and try again.")
-                )
+                if let error = storeManager.errorMessage {
+                    Text(error)
+                        .foregroundColor(.red)
+                        .font(.subheadline.bold())
+                        .multilineTextAlignment(.center)
+                        .padding()
+                } else {
+                    Text("No plans available at this moment.")
+                        .foregroundColor(.secondary)
+                }
             } else {
                 ForEach(storeManager.subscriptions, id: \.id) { product in
                     PaidPlanCard(
@@ -189,7 +194,12 @@ struct PaywallView: View {
                 Task {
                     defer { isPurchasing = false }
                     do {
-                        try await storeManager.purchase(product)
+                        let success = try await storeManager.purchase(product)
+                        if success {
+                            await MainActor.run {
+                                dismiss()
+                            }
+                        }
                     } catch StoreManager.PurchaseError.pending {
                         purchaseError = "Your purchase is pending approval."
                     } catch StoreManager.PurchaseError.verificationFailed {

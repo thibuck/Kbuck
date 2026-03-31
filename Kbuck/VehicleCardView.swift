@@ -164,7 +164,7 @@ struct VehicleCardView: View {
             .contentShape(Rectangle())
             .onTapGesture {
                 haptic(.light)
-                withAnimation(.snappy) { isExpanded.toggle() }
+                isExpanded.toggle()
             }
 
             // ── Expanded content ───────────────────────────────────────────
@@ -265,6 +265,35 @@ struct VehicleCardView: View {
                                 return
                             }
                             Task {
+                                let configs = supabaseService.tierConfigs
+                                let currentTier = storeManager.activeSubscriptionTier
+                                let currentLimit = storeManager.dailyLimit(from: configs)
+                                let currentUsage = supabaseService.currentProfile?.effectiveDailyUsage ?? 0
+                                let isUnlimited = userRole == "super_admin" || currentTier == .platinum
+
+                                if !isUnlimited && currentUsage >= currentLimit {
+                                    await MainActor.run {
+                                        UINotificationFeedbackGenerator().notificationOccurred(.error)
+                                        let limitStr = "\(currentLimit)"
+                                        let (nextName, nextLimit): (String, String)
+                                        switch currentTier {
+                                        case .none:
+                                            nextName  = "Silver"
+                                            nextLimit = "\(configs["silver"]?.daily_fetch_limit ?? 10)"
+                                        case .silver:
+                                            nextName  = "Gold"
+                                            nextLimit = "\(configs["gold"]?.daily_fetch_limit ?? 30)"
+                                        case .gold, .platinum:
+                                            nextName  = "Platinum"
+                                            nextLimit = "Unlimited"
+                                        }
+                                        isQuotaExceededAlert = true
+                                        extractionErrorMessage = "You've reached your daily limit of \(limitStr). Upgrade to \(nextName) to unlock up to \(nextLimit) daily extractions."
+                                        showExtractionErrorAlert = true
+                                    }
+                                    return
+                                }
+
                                 let limitStatus = await supabaseService.checkExtractionLimits(vin: cardKey)
                                 await MainActor.run {
                                     if limitStatus.allowed {
@@ -273,10 +302,7 @@ struct VehicleCardView: View {
                                         showLegalDisclaimer = true
                                     } else {
                                         UINotificationFeedbackGenerator().notificationOccurred(.error)
-                                        let configs       = supabaseService.tierConfigs
-                                        let currentTier   = storeManager.activeSubscriptionTier
-                                        let currentLimit  = storeManager.dailyLimit(from: configs)
-                                        let limitStr      = currentLimit == Int.max ? "Unlimited" : "\(currentLimit)"
+                                        let limitStr = currentLimit == Int.max ? "Unlimited" : "\(currentLimit)"
                                         let (nextName, nextLimit): (String, String)
                                         switch currentTier {
                                         case .none:
@@ -290,7 +316,7 @@ struct VehicleCardView: View {
                                             nextLimit = "Unlimited"
                                         }
                                         isQuotaExceededAlert     = true
-                                        extractionErrorMessage   = "You've reached your daily limit of \(limitStr). Upgrade to \(nextName) to get \(nextLimit) extractions per day!"
+                                        extractionErrorMessage   = limitStatus.reason ?? "You've reached your daily limit of \(limitStr). Upgrade to \(nextName) to unlock up to \(nextLimit) daily extractions."
                                         showExtractionErrorAlert = true
                                     }
                                 }

@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		BC5151372F7B160C0059AEBF /* QuotaUsageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC5151362F7B160C0059AEBF /* QuotaUsageView.swift */; };
+		BC51513A2F7B47FA0059AEBF /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BC5151392F7B47FA0059AEBF /* StoreKit.framework */; };
 		BCB1B9782F788AA400E59B19 /* KbuckStore.storekit in Resources */ = {isa = PBXBuildFile; fileRef = BCB1B9772F788AA400E59B19 /* KbuckStore.storekit */; };
 		BCB1B9792F788AA400E59B19 /* KbuckStore.storekit in Resources */ = {isa = PBXBuildFile; fileRef = BCB1B9772F788AA400E59B19 /* KbuckStore.storekit */; };
 		BCB1B97A2F788AA400E59B19 /* KbuckStore.storekit in Resources */ = {isa = PBXBuildFile; fileRef = BCB1B9772F788AA400E59B19 /* KbuckStore.storekit */; };
@@ -42,6 +43,7 @@
 
 /* Begin PBXFileReference section */
 		BC5151362F7B160C0059AEBF /* QuotaUsageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuotaUsageView.swift; sourceTree = "<group>"; };
+		BC5151392F7B47FA0059AEBF /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
 		BC9A493B2EA2CCAE00011997 /* Kbuck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Kbuck.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BC9A49482EA2CCAF00011997 /* KbuckTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KbuckTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BC9A49522EA2CCAF00011997 /* KbuckUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KbuckUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -89,6 +91,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				BCD18D6C2F746F5B0018C5E6 /* PostgREST in Frameworks */,
+				BC51513A2F7B47FA0059AEBF /* StoreKit.framework in Frameworks */,
 				BCD18D6A2F746F5B0018C5E6 /* Functions in Frameworks */,
 				BCD18D722F746F5B0018C5E6 /* Supabase in Frameworks */,
 				BCD18D682F746F5B0018C5E6 /* Auth in Frameworks */,
@@ -114,6 +117,14 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		BC5151382F7B47FA0059AEBF /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				BC5151392F7B47FA0059AEBF /* StoreKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		BC9A49322EA2CCAE00011997 = {
 			isa = PBXGroup;
 			children = (
@@ -127,6 +138,7 @@
 				BCB1B9772F788AA400E59B19 /* KbuckStore.storekit */,
 				BCD18D792F747AE60018C5E6 /* HPDSettingsView.swift */,
 				BC5151362F7B160C0059AEBF /* QuotaUsageView.swift */,
+				BC5151382F7B47FA0059AEBF /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -497,7 +509,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
-				MARKETING_VERSION = 0.30;
+				MARKETING_VERSION = 1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = smartdecision.Kbuck;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -557,7 +569,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
-				MARKETING_VERSION = 0.30;
+				MARKETING_VERSION = 1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = smartdecision.Kbuck;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;

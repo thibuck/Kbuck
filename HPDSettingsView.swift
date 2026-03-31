@@ -11,7 +11,52 @@ struct AdminUserStatus: Codable, Identifiable {
     let last_scrape_reset: String?
     let total_fetches: Int?
     let role: String?
-    let app_version: String?
+    var plan_tier: String?
+    var app_version: String?
+
+    var effectiveDailyUsage: Int {
+        let rawCount = scrape_count_today ?? 0
+        guard let raw = last_scrape_reset else { return rawCount }
+
+        let normalized = raw.replacingOccurrences(of: " ", with: "T")
+        var resetDate: Date?
+
+        let isoFull = ISO8601DateFormatter()
+        isoFull.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        resetDate = isoFull.date(from: normalized)
+
+        if resetDate == nil {
+            let isoBasic = ISO8601DateFormatter()
+            isoBasic.formatOptions = [.withInternetDateTime]
+            resetDate = isoBasic.date(from: normalized)
+        }
+
+        if resetDate == nil {
+            let df = DateFormatter()
+            df.locale = Locale(identifier: "en_US_POSIX")
+            df.timeZone = TimeZone(secondsFromGMT: 0)
+            for fmt in [
+                "yyyy-MM-dd'T'HH:mm:ss.SSSSSSZZZZZ",
+                "yyyy-MM-dd'T'HH:mm:ss.SSSZZZZZ",
+                "yyyy-MM-dd'T'HH:mm:ssZZZZZ",
+                "yyyy-MM-dd HH:mm:ssZZZZZ",
+                "yyyy-MM-dd HH:mm:ss",
+                "yyyy-MM-dd"
+            ] {
+                df.dateFormat = fmt
+                if let d = df.date(from: raw) { resetDate = d; break }
+            }
+        }
+
+        guard let resetDate else { return rawCount }
+        guard let centralTimeZone = TimeZone(identifier: "America/Chicago") else { return rawCount }
+
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = centralTimeZone
+        let todayStart = cal.startOfDay(for: Date())
+        let resetStart = cal.startOfDay(for: resetDate)
+        return resetStart < todayStart ? 0 : rawCount
+    }
 
     var displayTime: String {
         guard let raw = last_active else { return "Never" }
@@ -90,6 +135,7 @@ struct LegalTermsView: View {
 
 struct AdminUserDetailSheet: View {
     let user: AdminUserStatus
+    let dailyLimit: Int?
     let supabaseService: SupabaseService
     let currentUserID: UUID?
     let onActionComplete: () -> Void
@@ -135,13 +181,18 @@ struct AdminUserDetailSheet: View {
                     }
                 } else {
                     Section(header: Text("Quota Usage")) {
-                        let count = user.scrape_count_today ?? 0
-                        ProgressView(value: Double(count), total: 50.0) {
-                            Text("Daily Usage: \(count) / 50 today")
+                        let count = user.effectiveDailyUsage
+                        if let dailyLimit, dailyLimit > 0 {
+                            ProgressView(value: Double(count), total: Double(dailyLimit)) {
+                                Text("Daily Usage: \(count) / \(dailyLimit) today")
+                                    .font(.subheadline)
+                            }
+                            .progressViewStyle(.linear)
+                            .tint(Double(count) / Double(dailyLimit) >= 0.9 ? .red : (Double(count) / Double(dailyLimit) >= 0.6 ? .yellow : .green))
+                        } else {
+                            Text("Daily Usage: \(count) today")
                                 .font(.subheadline)
                         }
-                        .progressViewStyle(.linear)
-                        .tint(count >= 45 ? .red : (count >= 30 ? .yellow : .green))
 
                         LabeledContent("Lifetime Usage") {
                             Text("\(user.total_fetches ?? 0) total lifetime fetches")
@@ -224,6 +275,7 @@ struct AdminUserDetailSheet: View {
 struct UserActivityDetailView: View {
     @EnvironmentObject private var supabaseService: SupabaseService
     @State private var adminUsers: [AdminUserStatus] = []
+    @State private var tierDailyLimits: [String: Int] = [:]
     @State private var isLoading: Bool = false
     @State private var selectedUser: AdminUserStatus? = nil
 
@@ -254,27 +306,56 @@ struct UserActivityDetailView: View {
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                     } else {
-                                        let count = user.scrape_count_today ?? 0
-                                        Text("Daily: \(count) / 50  ·  Lifetime: \(user.total_fetches ?? 0)")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                        let count = user.effectiveDailyUsage
+                                        let limit = dailyLimit(for: user)
+                                        if limit > 0 {
+                                            Text("Daily: \(count) / \(limit)  ·  Lifetime: \(user.total_fetches ?? 0)")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        } else {
+                                            Text("Daily: \(count)  ·  Lifetime: \(user.total_fetches ?? 0)")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
                                     }
+                                    Text("v\(user.app_version ?? "Unknown")")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
                                 }
                                 Spacer()
-                                if user.is_banned == true {
-                                    Text("BANNED")
-                                        .font(.caption.bold())
-                                        .foregroundStyle(.red)
-                                } else if user.role == "super_admin" {
-                                    Text(user.displayTime)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                } else {
-                                    VStack(alignment: .trailing, spacing: 4) {
-                                        let count = user.scrape_count_today ?? 0
-                                        ProgressView(value: Double(count), total: 50.0)
+                                VStack(alignment: .trailing, spacing: 4) {
+                                    if user.is_banned == true {
+                                        Text("BANNED")
+                                            .font(.caption.bold())
+                                            .foregroundStyle(.red)
+                                    }
+
+                                    if isTierLoading(for: user) {
+                                        ProgressView()
+                                            .controlSize(.mini)
+                                            .frame(width: 24, height: 24)
+                                    } else if let tierName = normalizedTierName(for: user), UIImage(named: tierName) != nil {
+                                        Image(tierName)
+                                            .resizable()
+                                            .scaledToFit()
+                                            .frame(width: 24, height: 24)
+                                    } else {
+                                        Image(systemName: "star.shield.fill")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .frame(width: 24, height: 24)
+                                    }
+
+                                    if user.role == "super_admin" {
+                                        Text(user.displayTime)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    } else {
+                                        let count = user.effectiveDailyUsage
+                                        let limit = dailyLimit(for: user)
+                                        ProgressView(value: Double(count), total: Double(max(limit, 1)))
                                             .progressViewStyle(.linear)
-                                            .tint(count >= 45 ? .red : count >= 30 ? .yellow : .green)
+                                            .tint(progressTint(count: count, limit: limit))
                                             .frame(width: 64)
                                         Text(user.displayTime)
                                             .font(.caption2)
@@ -304,7 +385,7 @@ struct UserActivityDetailView: View {
             }
         }
         .sheet(item: $selectedUser) { user in
-            AdminUserDetailSheet(user: user, supabaseService: supabaseService, currentUserID: supabase.auth.currentUser?.id) {
+            AdminUserDetailSheet(user: user, dailyLimit: dailyLimit(for: user), supabaseService: supabaseService, currentUserID: supabase.auth.currentUser?.id) {
                 Task { await fetch() }
             }
         }
@@ -314,18 +395,107 @@ struct UserActivityDetailView: View {
     private func fetch() async {
         isLoading = true
         do {
-            // Explicit column list forces the RPC result set to include total_fetches
-            // and role even if the function pre-dates those columns.
-            let users: [AdminUserStatus] = try await supabase
+            // Explicit column list forces the RPC result set to include total_fetches,
+            // role, plan_tier and app_version.
+            let response = try await supabase
                 .rpc("get_all_users_status")
-                .select("id, email, last_active, is_banned, scrape_count_today, last_scrape_reset, total_fetches, role, app_version")
+                .select("id, email, last_active, is_banned, scrape_count_today, last_scrape_reset, total_fetches, role, plan_tier, app_version")
                 .execute()
-                .value
-            await MainActor.run { adminUsers = users }
+
+            let decoder = JSONDecoder()
+            do {
+                let users = try decoder.decode([AdminUserStatus].self, from: response.data)
+                for user in users {
+                    logAdminUserDiagnostics(user)
+                }
+                let limits = await fetchTierDailyLimits()
+                await MainActor.run {
+                    tierDailyLimits = limits
+                    adminUsers = users
+                }
+            } catch let error as DecodingError {
+                print("Decoding Error: \(error)")
+
+                if let payload = try? JSONSerialization.jsonObject(with: response.data) as? [[String: Any]] {
+                    var recoveredUsers: [AdminUserStatus] = []
+                    for row in payload {
+                        do {
+                            let rowData = try JSONSerialization.data(withJSONObject: row)
+                            let user = try decoder.decode(AdminUserStatus.self, from: rowData)
+                            logAdminUserDiagnostics(user)
+                            recoveredUsers.append(user)
+                        } catch let rowError as DecodingError {
+                            print("Decoding Error: \(rowError)")
+                        } catch {
+                            print("🔴 Row decode error: \(error)")
+                        }
+                    }
+                    let limits = await fetchTierDailyLimits()
+                    await MainActor.run {
+                        tierDailyLimits = limits
+                        adminUsers = recoveredUsers
+                    }
+                }
+            }
         } catch {
             print("🔴 RPC Error fetching users: \(error)")
         }
         await MainActor.run { isLoading = false }
+    }
+
+    private func normalizedTierName(for user: AdminUserStatus) -> String? {
+        guard let tier = user.plan_tier?.trimmingCharacters(in: .whitespacesAndNewlines), !tier.isEmpty else { return nil }
+        return tier.lowercased()
+    }
+
+    private func isTierLoading(for user: AdminUserStatus) -> Bool {
+        guard let rawTier = user.plan_tier else { return true }
+        let normalized = rawTier.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.isEmpty || normalized == "loading"
+    }
+
+    private func dailyLimit(for user: AdminUserStatus) -> Int {
+        guard let tierKey = normalizedTierName(for: user) else { return 0 }
+        return tierDailyLimits[tierKey] ?? 0
+    }
+
+    private func progressTint(count: Int, limit: Int) -> Color {
+        guard limit > 0 else { return .green }
+        let ratio = Double(count) / Double(limit)
+        if ratio >= 0.9 { return .red }
+        if ratio >= 0.6 { return .yellow }
+        return .green
+    }
+
+    private func fetchTierDailyLimits() async -> [String: Int] {
+        struct TierLimitRow: Decodable {
+            let tier_name: String
+            let daily_fetch_limit: Int
+        }
+
+        do {
+            let rows: [TierLimitRow] = try await supabase
+                .from("subscription_tiers_kbuck")
+                .select("tier_name, daily_fetch_limit")
+                .execute()
+                .value
+
+            return Dictionary(uniqueKeysWithValues: rows.map { ($0.tier_name.lowercased(), $0.daily_fetch_limit) })
+        } catch {
+            print("🔴 Failed to fetch tier daily limits: \(error)")
+            return [:]
+        }
+    }
+
+    private func logAdminUserDiagnostics(_ user: AdminUserStatus) {
+        let email = user.email ?? "Unknown"
+        let tier = user.plan_tier
+        let totalFetches = user.total_fetches ?? 0
+        let appVersion = user.app_version
+        print("DEBUG USER ADMIN: Fetched profile for \(email)")
+        print("DEBUG USER ADMIN: -> Tier: \(tier ?? "NIL")")
+        print("DEBUG USER ADMIN: -> Lifetime Fetches: \(totalFetches)")
+        print("DEBUG USER ADMIN: -> App Version: \(appVersion ?? "NIL")")
     }
 }
 
@@ -359,7 +529,7 @@ struct HPDSettingsView: View {
 
     // MARK: - Usage Dashboard
 
-    private var currentCount: Int { supabaseService.currentProfile?.scrape_count_today ?? 0 }
+    private var currentCount: Int { supabaseService.currentProfile?.effectiveDailyUsage ?? 0 }
 
     private var currentTierKey: String {
         supabaseService.currentProfile?.plan_tier?.lowercased() ?? storeManager.activeSubscriptionTier.tierKey
@@ -367,6 +537,11 @@ struct HPDSettingsView: View {
 
     private var currentTierDisplayName: String {
         currentTierKey.capitalized
+    }
+
+    private var currentProfileTierDisplay: String? {
+        guard let tier = supabaseService.currentTier?.trimmingCharacters(in: .whitespacesAndNewlines), !tier.isEmpty else { return nil }
+        return tier.capitalized
     }
 
     private var dailyLimit: Int {
@@ -447,9 +622,19 @@ struct HPDSettingsView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Current Plan")
                                     .font(.subheadline)
-                                Text(storeManager.activeSubscriptionTier.displayName)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                if let profileTier = currentProfileTierDisplay {
+                                    Text(profileTier)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    HStack(spacing: 6) {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                        Text("Loading...")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
                             }
                             Spacer()
                             HStack(spacing: 8) {

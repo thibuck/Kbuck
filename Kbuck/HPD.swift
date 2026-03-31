@@ -2246,9 +2246,6 @@ struct HPDView: View {
         .listSectionSpacing(.custom(0))
         .navigationTitle("HPD AUCTION (\(cachedFilteredCount))")
         .navigationBarTitleDisplayMode(.inline)
-        .refreshable {
-            await supabaseService.syncFetchFavoritesFromSupabase()
-        }
         } // end else (isLoading && entries.isEmpty)
     }
 
@@ -2318,6 +2315,11 @@ struct HPDView: View {
                                     ForEach(dateGroup.locations, id: \.address) { locationGroup in
                                         let shortAddress = locationGroup.address.components(separatedBy: " Houston").first ?? locationGroup.address
                                         let totalVehicles = locationGroup.vehicles.count
+                                        let headerAuctionDate: Date? = {
+                                            let date = locationGroup.vehicles.compactMap { parseAuctionDate($0.dateScheduled, timeStr: $0.time) }.first
+                                            return date
+                                        }()
+                                        let formattedTime = headerAuctionDate?.compactAuctionTime()
                                         let sectionKey = "\(dateGroup.date)|\(locationGroup.address)"
 
                                         VStack(alignment: .leading, spacing: 12) {
@@ -2358,7 +2360,7 @@ struct HPDView: View {
                                                 HStack(spacing: 6) {
                                                     Image(systemName: "mappin.and.ellipse")
                                                         .font(.callout)
-                                                        .foregroundStyle(.blue)
+                                                        .foregroundColor(.blue)
 
                                                     Text(shortAddress.capitalized)
                                                         .font(.subheadline.weight(.semibold))
@@ -2366,14 +2368,23 @@ struct HPDView: View {
                                                         .lineLimit(1)
                                                         .truncationMode(.tail)
 
+                                                    if let formattedTime {
+                                                        Text("•")
+                                                            .foregroundColor(.primary)
+                                                        Text(formattedTime)
+                                                            .font(.subheadline.bold())
+                                                            .foregroundColor(.primary)
+                                                    }
+
                                                     Spacer(minLength: 6)
 
                                                     Text("\(totalVehicles) \(totalVehicles == 1 ? "vehicle" : "vehicles")")
-                                                        .font(.footnote)
-                                                        .foregroundStyle(.secondary)
-                                                        .padding(.horizontal, 6)
-                                                        .padding(.vertical, 2)
-                                                        .background(Capsule().fill(Color.secondary.opacity(0.14)))
+                                                        .padding(.horizontal, 8)
+                                                        .padding(.vertical, 4)
+                                                        .background(Color.blue)
+                                                        .foregroundColor(.white)
+                                                        .font(.caption.bold())
+                                                        .clipShape(Capsule())
                                                 }
                                                 .frame(maxWidth: .infinity, alignment: .leading)
                                             }
@@ -2410,9 +2421,6 @@ struct HPDView: View {
         }
         .navigationTitle("FAVORITES (\(cachedFilteredCount))")
         .navigationBarTitleDisplayMode(.inline)
-        .refreshable {
-            await supabaseService.syncFetchFavoritesFromSupabase()
-        }
     }
 
 
@@ -3165,6 +3173,12 @@ struct HPDView: View {
     }
 
     // MARK: - Favorites: Date-primary grouping (chronological dates → alphabetical locations → odometer desc)
+
+    private func compactAuctionTime(for entry: HPDEntry) -> String? {
+        guard let rawTime = entry.time?.trimmingCharacters(in: .whitespacesAndNewlines), !rawTime.isEmpty else { return nil }
+        guard let auctionDate = parseAuctionDate(entry.dateScheduled, timeStr: rawTime) else { return nil }
+        return auctionDate.compactAuctionTime()
+    }
 
     private var groupedFavorites: [(date: String, locations: [(address: String, vehicles: [HPDEntry])])] {
         let byDate = Dictionary(grouping: cachedFilteredEntries, by: { $0.dateScheduled })

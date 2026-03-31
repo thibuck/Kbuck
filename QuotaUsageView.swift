@@ -8,7 +8,7 @@ struct QuotaUsageView: View {
     @State private var isLoadingProfile: Bool = false
 
     private var currentCount: Int {
-        supabaseService.currentProfile?.effectiveScrapeCount ?? 0
+        supabaseService.currentProfile?.effectiveDailyUsage ?? 0
     }
 
     private var currentTierKey: String {

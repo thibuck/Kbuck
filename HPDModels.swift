@@ -51,6 +51,18 @@ private enum AuctionDateCache {
     }()
 }
 
+private enum CompactAuctionTimeCache {
+    static let lock = NSLock()
+    static let formatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "h:mm a"
+        formatter.amSymbol = "am"
+        formatter.pmSymbol = "pm"
+        return formatter
+    }()
+}
+
 // MARK: - Shared Utility Functions
 
 /// Normalizes a VIN to uppercase alphanumeric, excluding I, O, Q per VIN specification.
@@ -74,6 +86,43 @@ func parseAuctionDate(from dateString: String) -> Date? {
     AuctionDateCache.lock.lock()
     defer { AuctionDateCache.lock.unlock() }
     return AuctionDateCache.formatter.date(from: dateString)
+}
+
+func parseAuctionDate(_ dateStr: String, timeStr: String?) -> Date? {
+    let base = dateStr.trimmingCharacters(in: .whitespacesAndNewlines)
+    let time = (timeStr ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    let df = DateFormatter()
+    df.locale = Locale(identifier: "en_US_POSIX")
+    df.timeZone = .current
+    let dateCandidatesWithTime = [
+        "MM/dd/yyyy h:mm:ss a", "MM/dd/yyyy h:mm a",
+        "M/d/yyyy h:mm:ss a", "M/d/yyyy h:mm a",
+        "MM/dd/yy h:mm:ss a", "MM/dd/yy h:mm a",
+        "M/d/yy h:mm:ss a", "M/d/yy h:mm a"
+    ]
+    if !time.isEmpty {
+        for f in dateCandidatesWithTime {
+            df.dateFormat = f
+            if let d = df.date(from: "\(base) \(time)") { return d }
+        }
+    }
+    let dateOnlyCandidates = ["MM/dd/yyyy", "M/d/yyyy", "MM/dd/yy", "M/d/yy"]
+    for f in dateOnlyCandidates {
+        df.dateFormat = f
+        if let d = df.date(from: base) { return d }
+    }
+    return nil
+}
+
+extension Date {
+    func compactAuctionTime() -> String {
+        CompactAuctionTimeCache.lock.lock()
+        let raw = CompactAuctionTimeCache.formatter.string(from: self)
+        CompactAuctionTimeCache.lock.unlock()
+        return raw
+            .replacingOccurrences(of: ":00", with: "")
+            .replacingOccurrences(of: " ", with: "")
+    }
 }
 
 /// Returns true if the auction date falls strictly before today's midnight.
@@ -187,6 +236,11 @@ func brandDisplayName(for rawMake: String) -> String {
     if m.contains("infiniti")   || m.hasPrefix("infi") { return "Infiniti" }
     if m.contains("pontiac")    || m.hasPrefix("pont") { return "Pontiac" }
     if m.contains("lincoln")    || m.hasPrefix("linc") { return "Lincoln" }
+    if m.contains("suzuki")    || m.hasPrefix("suzi") { return "Suzuki" }
+    if m.contains("audi")    || m.hasPrefix("audi") { return "Audi" }
+    if m.contains("mercuri")    || m.hasPrefix("merc") { return "Mercuri" }
+    if m.contains("saturn")    || m.hasPrefix("satu") { return "Saturn" }
+
     return rawMake.capitalized
 }
 
@@ -222,5 +276,10 @@ func brandAssetName(for rawMake: String) -> String? {
     if m.contains("infiniti")   || m.hasPrefix("infi") { return "infi" }
     if m.contains("pontiac")    || m.hasPrefix("pont") { return "pont" }
     if m.contains("lincoln")    || m.hasPrefix("linc") { return "linc" }
+    if m.contains("suzuki")    || m.hasPrefix("suzi") { return "suzi" }
+    if m.contains("audi")    || m.hasPrefix("audi") { return "audi" }
+    if m.contains("mercuri")    || m.hasPrefix("merc") { return "merc" }
+    if m.contains("saturn")    || m.hasPrefix("satu") { return "satu" }
+
     return nil
 }

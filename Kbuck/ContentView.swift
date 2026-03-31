@@ -66,8 +66,8 @@ struct ContentView: View {
     // Defaults to "user" so no privileged UI is ever shown before the fetch resolves.
     @AppStorage("userRole") private var userRole: String = "user"
 
-    // Shared across all tabs — prevents duplicate network calls and keeps state in sync.
-    @StateObject private var supabaseService = SupabaseService()
+    // Shared service injected at app root so sheets and all branches receive it safely.
+    @EnvironmentObject private var supabaseService: SupabaseService
 
     // Cross-tab routing state — elevated here so HomeSummaryView and HPDView share a single source of truth.
     @State private var selectedTab: Int = 0
@@ -92,11 +92,11 @@ struct ContentView: View {
                         .tabItem { Label("SETTINGS", systemImage: "gearshape.fill") }
                         .tag(3)
                 }
-                .environmentObject(supabaseService)
             } else {
                 LoginView()
             }
         }
+        .environmentObject(supabaseService)
         // authStateChanges is nonisolated and always emits .initialSession first,
         // so this single stream drives both the launch-time check and ongoing changes.
         .task {
@@ -106,6 +106,7 @@ struct ContentView: View {
                     isAuthenticated = session != nil
                     isAuthReady     = true
                     if session != nil {
+                        await supabaseService.syncCurrentUserAppVersion()
                         if !didBootstrapFavorites {
                             await supabaseService.syncFetchFavoritesFromSupabase()
                             didBootstrapFavorites = true
@@ -119,6 +120,7 @@ struct ContentView: View {
                     }
                 case .signedIn:
                     isAuthenticated = true
+                    await supabaseService.syncCurrentUserAppVersion()
                     if !didBootstrapFavorites {
                         await supabaseService.syncFetchFavoritesFromSupabase()
                         didBootstrapFavorites = true

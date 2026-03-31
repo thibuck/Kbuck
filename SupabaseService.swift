@@ -18,8 +18,11 @@ import Supabase
 //     Decoded payload → {"role":"anon"} ✓ — confirmed safe.
 //     NEVER paste the service_role key here; it bypasses ALL RLS policies.
 //
+private let supabaseURLString = "https://tnescuqegmehazuffmte.supabase.co"
+private let fallbackSupabaseURL = URL(string: "https://example.com") ?? URL(fileURLWithPath: "/")
+
 let supabase = SupabaseClient(
-    supabaseURL: URL(string: "https://tnescuqegmehazuffmte.supabase.co")!,
+    supabaseURL: URL(string: supabaseURLString) ?? fallbackSupabaseURL,
     supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRuZXNjdXFlZ21laGF6dWZmbXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2OTI4ODEsImV4cCI6MjA4OTI2ODg4MX0.LszstZi962himWPuoSWEXR9Xzhbl2ncewJSGzTnoeIg",
     options: SupabaseClientOptions(auth: SupabaseClientOptions.AuthOptions(emitLocalSessionAsInitialSession: true))
 )
@@ -56,7 +59,7 @@ struct UserUsageProfile: Codable {
     /// Texas timezone) falls strictly before today in that same timezone,
     /// the DB value is stale and we return 0 so the UI always shows the truth.
     /// Falls back to the raw `scrape_count_today` if date parsing fails.
-    var effectiveScrapeCount: Int {
+    var effectiveDailyUsage: Int {
         guard let raw = last_scrape_reset else { return scrape_count_today }
 
         // Normalise the Supabase timestamp — it may contain a space instead of 'T'
@@ -96,13 +99,20 @@ struct UserUsageProfile: Codable {
         guard let resetDate else { return scrape_count_today }
 
         // Compare calendar *days* in America/Chicago — the server's reset boundary
+        guard let centralTimeZone = TimeZone(identifier: "America/Chicago") else {
+            return scrape_count_today
+        }
         var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: "America/Chicago")!
+        cal.timeZone = centralTimeZone
         let todayStart = cal.startOfDay(for: Date())
         let resetStart = cal.startOfDay(for: resetDate)
 
         // If the reset day predates today (CT) the DB hasn't lazy-reset yet → show 0
         return resetStart < todayStart ? 0 : scrape_count_today
+    }
+
+    var effectiveScrapeCount: Int {
+        effectiveDailyUsage
     }
 }
 
@@ -127,6 +137,7 @@ struct FavoriteRow: Codable {
     @Published private(set) var favorites: Set<String> = []
     @Published private(set) var odoByVIN: [String: OdoInfo] = [:]
     @Published private(set) var currentProfile: UserUsageProfile? = nil
+    @Published private(set) var currentTier: String? = nil
     @Published private(set) var tierConfigs: [String: TierConfig] = [:]
 
     // UserDefaults keys (same as the old @AppStorage keys so data migrates automatically)
@@ -471,9 +482,31 @@ struct FavoriteRow: Codable {
     func fetchCurrentProfile() async {
         do {
             let profiles: [UserUsageProfile] = try await supabase.rpc("get_my_usage_profile").execute().value
-            await MainActor.run { self.currentProfile = profiles.first }
+            let fetchedProfile = profiles.first
+            let fetchedTier = fetchedProfile?.plan_tier
+            await MainActor.run {
+                print("DEBUG DASHBOARD: Current user profile fetched.")
+                print("DEBUG DASHBOARD: -> Real Tier is: \(fetchedTier ?? "NIL")")
+                self.currentProfile = fetchedProfile
+                self.currentTier = fetchedTier?.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
         } catch {
             print("🔴 fetchCurrentProfile failed: \(error)")
+        }
+    }
+
+    func syncCurrentUserAppVersion() async {
+        guard let user = supabase.auth.currentUser else { return }
+        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
+
+        do {
+            try await supabase
+                .from("profiles_kbuck")
+                .update(["app_version": appVersion])
+                .eq("id", value: user.id.uuidString)
+                .execute()
+        } catch {
+            print("🔴 app_version sync failed: \(error)")
         }
     }
 
@@ -484,17 +517,18 @@ struct FavoriteRow: Codable {
             return try await supabase.rpc("can_extract_data", params: ["target_vin": vin]).execute().value
         } catch {
             print("🔴 Limit check failed: \(error)")
-            return RateLimitResponse(allowed: true, reason: nil) // Fail open on network errors
+            return RateLimitResponse(allowed: false, reason: "Quota validation unavailable. Please try again.")
         }
     }
 
     func recordExtractionUsage(vin: String) {
         Task(priority: .background) {
-            _ = try? await supabase.rpc("record_data_extraction", params: ["target_vin": vin]).execute()
+            guard let user = supabase.auth.currentUser else { return }
+            _ = try? await supabase.rpc("increment_fetch_count", params: ["user_uuid": user.id.uuidString]).execute()
         }
     }
 
-    /// Increments the daily quota counter via the timezone-aware RPC.
+    /// Increments daily and lifetime counters via a single DB RPC.
     /// Super Admins are exempt — this function returns immediately without touching the DB.
     func incrementQuota() async {
         guard let user = supabase.auth.currentUser else { return }
@@ -502,17 +536,17 @@ struct FavoriteRow: Codable {
         // Read role from UserDefaults (written at login by KbuckApp / LoginView)
         let role = UserDefaults.standard.string(forKey: "userRole") ?? "user"
         guard role != "super_admin" else {
-            print("🔵 QUOTA: super_admin — skipping increment_user_quota")
+            print("🔵 QUOTA: super_admin — skipping increment_fetch_count")
             return
         }
 
         do {
             try await supabase
-                .rpc("increment_user_quota", params: ["user_uuid": user.id.uuidString])
+                .rpc("increment_fetch_count", params: ["user_uuid": user.id.uuidString])
                 .execute()
             await fetchCurrentProfile()
         } catch {
-            print("🔴 QUOTA: increment_user_quota failed: \(error)")
+            print("🔴 QUOTA: increment_fetch_count failed: \(error)")
         }
     }
 

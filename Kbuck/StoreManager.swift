@@ -134,8 +134,35 @@ final class StoreManager: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
+        errorMessage = nil
+
+        let tierConfigs: [TierConfig]
         do {
-            let storeProducts = try await Product.products(for: StoreManager.allProductIDs)
+            tierConfigs = try await supabase
+                .from("subscription_tiers_kbuck")
+                .select("tier_name, daily_fetch_limit, max_favorites")
+                .execute()
+                .value
+        } catch {
+            errorMessage = "DB Error: \(error.localizedDescription)"
+            return
+        }
+
+        let productIdMapping: [String: String] = [
+            "silver": "com.kbuck.silver.monthly",
+            "gold": "com.kbuck.gold.monthly",
+            "platinum": "com.kbuck.platinum.monthly",
+            "carfax standard": "com.kbuck.carfax.standard",
+            "carfax platinum": "com.kbuck.carfax.platinum"
+        ]
+
+        let requestedIDs = tierConfigs.compactMap { config -> String? in
+            let normalizedName = config.tier_name.lowercased()
+            return productIdMapping[normalizedName]
+        }
+
+        do {
+            let storeProducts = try await Product.products(for: requestedIDs)
 
             var fetchedSubscriptions: [Product] = []
             var fetchedConsumables: [Product] = []
@@ -151,12 +178,11 @@ final class StoreManager: ObservableObject {
                 }
             }
 
-            // Sort subscriptions by price ascending (Silver → Gold → Platinum)
             subscriptions = fetchedSubscriptions.sorted { $0.price < $1.price }
             consumables = fetchedConsumables
 
         } catch {
-            errorMessage = "Failed to fetch products: \(error.localizedDescription)"
+            errorMessage = "Store Error: \(error.localizedDescription)"
         }
     }
 
