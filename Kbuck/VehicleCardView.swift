@@ -20,6 +20,8 @@ struct VehicleCardView: View {
     let entry: HPDEntry
     var showAddress: Bool = true
     var showQuickInventory: Bool = true
+    var showFavoriteButton: Bool = true
+    var isFavoritesContext: Bool = false
 
     @EnvironmentObject private var supabaseService: SupabaseService
     @EnvironmentObject private var storeManager: StoreManager
@@ -33,11 +35,15 @@ struct VehicleCardView: View {
         entry: HPDEntry,
         showAddress: Bool = true,
         showQuickInventory: Bool = true,
+        showFavoriteButton: Bool = true,
+        isFavoritesContext: Bool = false,
         initiallyExpanded: Bool = false
     ) {
         self.entry = entry
         self.showAddress = showAddress
         self.showQuickInventory = showQuickInventory
+        self.showFavoriteButton = showFavoriteButton
+        self.isFavoritesContext = isFavoritesContext
         _isExpanded = State(initialValue: initiallyExpanded)
     }
     @State private var copiedVIN: String? = nil
@@ -110,7 +116,6 @@ struct VehicleCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-
             // ── Header (always visible) — tap to expand/collapse ──────────
             HStack(alignment: .center, spacing: 8) {
                 if let asset = brandAssetName(for: entry.make) {
@@ -152,23 +157,25 @@ struct VehicleCardView: View {
                     .buttonStyle(.plain)
                 }
 
-                Button {
-                    haptic(.light)
-                    if isFav {
-                        supabaseService.removeFavoriteLocally(cardKey)
-                        supabaseService.syncRemoveFavorite(cardKey)
-                    } else {
-                        pendingFavoriteKey   = cardKey
-                        pendingFavoriteEntry = entry
-                        pendingFavoriteLabel = "\(yearStr) \(entry.make) \(entry.model) - \(entry.vin)"
-                        showFavoriteConfirm  = true
+                if showFavoriteButton {
+                    Button {
+                        haptic(.light)
+                        if isFav {
+                            supabaseService.removeFavoriteLocally(cardKey)
+                            supabaseService.syncRemoveFavorite(cardKey)
+                        } else {
+                            pendingFavoriteKey   = cardKey
+                            pendingFavoriteEntry = entry
+                            pendingFavoriteLabel = "\(yearStr) \(entry.make) \(entry.model) - \(entry.vin)"
+                            showFavoriteConfirm  = true
+                        }
+                    } label: {
+                        Image(systemName: "star.fill")
+                            .font(.subheadline)
+                            .foregroundStyle(isFav ? AnyShapeStyle(.yellow) : AnyShapeStyle(.secondary))
                     }
-                } label: {
-                    Image(systemName: "star.fill")
-                        .font(.subheadline)
-                        .foregroundStyle(isFav ? AnyShapeStyle(.yellow) : AnyShapeStyle(.secondary))
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
             .contentShape(Rectangle())
             .onTapGesture {
@@ -375,13 +382,13 @@ struct VehicleCardView: View {
         .font(.system(.subheadline))
         .foregroundStyle(.primary)
         .padding(16)
-        .background(Color(uiColor: .secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(isFavoritesContext ? Color.clear : Color(uiColor: .secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: isFavoritesContext ? 0 : 16, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: isFavoritesContext ? 0 : 16, style: .continuous)
                 .stroke(processed ? Color.blue.opacity(0.4) : Color.clear, lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
+        .shadow(color: .black.opacity(isFavoritesContext ? 0 : 0.06), radius: isFavoritesContext ? 0 : 8, x: 0, y: 3)
 
         // MARK: - Modifiers: Alerts & Sheets
 

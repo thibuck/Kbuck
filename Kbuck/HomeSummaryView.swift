@@ -172,6 +172,24 @@ struct HomeSummaryView: View {
             }
             .sorted { $0.dateObj < $1.dateObj }
     }
+
+    private func defaultExpandedDate(from grouped: [DateCard]) -> String? {
+        guard !grouped.isEmpty else { return nil }
+
+        let now = Date()
+        let calendar = Calendar.current
+        let todayStart = calendar.startOfDay(for: now)
+        let noonToday = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: todayStart) ?? todayStart
+        let minimumPreferredDate = now >= noonToday
+            ? (calendar.date(byAdding: .day, value: 1, to: todayStart) ?? todayStart)
+            : todayStart
+
+        if let nearest = grouped.first(where: { calendar.startOfDay(for: $0.dateObj) >= minimumPreferredDate }) {
+            return nearest.date
+        }
+
+        return grouped.first?.date
+    }
     
     private func recomputeSummaries() {
         guard !hpdCachedEntriesData.isEmpty,
@@ -179,11 +197,17 @@ struct HomeSummaryView: View {
         else {
             cachedGroupedSummaries = []
             cachedActiveVehicleCount = 0
+            expandedDates = []
             return
         }
         let grouped = Self.buildGroupedSummaries(from: decoded)
         cachedGroupedSummaries = grouped
         cachedActiveVehicleCount = grouped.reduce(0) { $0 + $1.locations.reduce(0) { $0 + $1.count } }
+        if let defaultDate = defaultExpandedDate(from: grouped) {
+            expandedDates = [defaultDate]
+        } else {
+            expandedDates = []
+        }
     }
 
     // MARK: - Body

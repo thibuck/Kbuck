@@ -2116,6 +2116,164 @@ struct HPDView: View {
             || storeManager.activeSubscriptionTier == .platinum
     }
 
+    private func removeFavorite(_ entry: HPDEntry) {
+        let key = normalizeVIN(entry.vin)
+        supabaseService.removeFavoriteLocally(key)
+        supabaseService.syncRemoveFavorite(key)
+    }
+
+    private enum FavoriteGroupSegment {
+        case header
+        case item
+        case footer
+    }
+
+    private func favoriteGroupBackground(_ segment: FavoriteGroupSegment) -> some View {
+        let radii: RectangleCornerRadii
+        let strokeOpacity: Double
+        switch segment {
+        case .header:
+            radii = .init(topLeading: 22, bottomLeading: 0, bottomTrailing: 0, topTrailing: 22)
+            strokeOpacity = 0.05
+        case .item:
+            radii = .init(topLeading: 0, bottomLeading: 0, bottomTrailing: 0, topTrailing: 0)
+            strokeOpacity = 0
+        case .footer:
+            radii = .init(topLeading: 0, bottomLeading: 22, bottomTrailing: 22, topTrailing: 0)
+            strokeOpacity = 0.05
+        }
+
+        return UnevenRoundedRectangle(cornerRadii: radii, style: .continuous)
+            .fill(Color(uiColor: .systemBackground))
+            .overlay(
+                UnevenRoundedRectangle(cornerRadii: radii, style: .continuous)
+                    .stroke(Color.black.opacity(strokeOpacity), lineWidth: 1)
+            )
+    }
+
+    @ViewBuilder
+    private func favoriteVehicleRow(_ entry: HPDEntry, isFirstInLocation: Bool = false, isLastInLocation: Bool = false) -> some View {
+        VStack(spacing: 0) {
+            VehicleCardView(
+                entry: entry,
+                showAddress: false,
+                showQuickInventory: false,
+                showFavoriteButton: false,
+                isFavoritesContext: true,
+                initiallyExpanded: true
+            )
+            .padding(.horizontal, 6)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color(uiColor: .secondarySystemGroupedBackground))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color.black.opacity(0.04), lineWidth: 1)
+            )
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button(role: .destructive) {
+                removeFavorite(entry)
+            } label: {
+                Label("Remove", systemImage: "trash")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, isFirstInLocation ? 16 : 12)
+        .padding(.bottom, isLastInLocation ? 16 : 12)
+        .listRowInsets(EdgeInsets(top: 0, leading: 10, bottom: 0, trailing: 10))
+        .listRowSeparator(.hidden)
+        .listRowBackground(favoriteGroupBackground(.item))
+    }
+
+    @ViewBuilder
+    private func favoriteLocationHeader(
+        shortAddress: String,
+        formattedTime: String?,
+        totalVehicles: Int,
+        sectionKey: String
+    ) -> some View {
+        Button {
+            expandedLocations[sectionKey] = !(expandedLocations[sectionKey] ?? true)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "mappin.and.ellipse")
+                    .font(.callout)
+                    .foregroundColor(.blue)
+
+                Text(shortAddress.capitalized)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                if let formattedTime {
+                    Text("•")
+                        .foregroundColor(.primary)
+                    Text(formattedTime)
+                        .font(.subheadline.bold())
+                        .foregroundColor(.primary)
+                }
+
+                Spacer(minLength: 6)
+
+                Text("\(totalVehicles) \(totalVehicles == 1 ? "vehicle" : "vehicles")")
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.blue)
+                    .foregroundColor(.white)
+                    .font(.caption.bold())
+                    .clipShape(Capsule())
+
+                Image(systemName: (expandedLocations[sectionKey] ?? true) ? "chevron.up" : "chevron.down")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 12)
+            .background(Color(UIColor.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .shadow(color: Color.primary.opacity(0.08), radius: 6, x: 0, y: 3)
+        }
+        .buttonStyle(.plain)
+        .listRowInsets(EdgeInsets(top: 16, leading: 10, bottom: 0, trailing: 10))
+        .listRowSeparator(.hidden)
+        .listRowBackground(favoriteGroupBackground(.header))
+    }
+
+    @ViewBuilder
+    private func favoriteNavigateRow(address: String) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Spacer()
+                Button {
+                    selectedAddressForMap = address
+                    showMapAlert = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "location.fill")
+                        Text("Navigate")
+                            .font(.subheadline.bold())
+                    }
+                    .padding(.vertical, 7)
+                    .padding(.horizontal, 18)
+                    .background(Color(uiColor: .tertiarySystemFill))
+                    .clipShape(Capsule())
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                Spacer()
+            }
+        }
+        .padding(.top, 6)
+        .listRowInsets(EdgeInsets(top: 0, leading: 10, bottom: 16, trailing: 10))
+        .listRowSeparator(.hidden)
+        .listRowBackground(favoriteGroupBackground(.footer))
+    }
+
     // Single reactive token — changes whenever any filter or sort option changes.
     private var activeFilterHash: String {
         "\(filterOption.rawValue)|\(sortKey.rawValue)|\(decodedLocationFilters.sorted().joined(separator: ","))|\(sortAscending)|\(selectedYear.map(String.init) ?? "All")|\(selectedMake)|\(selectedModel)|\(maxPrice)"
@@ -2304,116 +2462,55 @@ struct HPDView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 10) {
-                            ForEach(groupedFavorites, id: \.date) { dateGroup in
-                                VStack(alignment: .leading, spacing: 10) {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "calendar")
-                                            .foregroundColor(.accentColor)
-                                            .font(.caption)
-                                        Text(dateGroup.date)
-                                            .font(.headline)
-                                            .foregroundStyle(.primary)
-                                            .lineLimit(1)
-                                            .minimumScaleFactor(0.9)
-                                        Spacer()
-                                    }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                    List {
+                        ForEach(groupedFavorites, id: \.date) { dateGroup in
+                            Section {
+                                ForEach(dateGroup.locations, id: \.address) { locationGroup in
+                                    let shortAddress = locationGroup.address.components(separatedBy: " Houston").first ?? locationGroup.address
+                                    let totalVehicles = locationGroup.vehicles.count
+                                    let headerAuctionDate: Date? = {
+                                        let date = locationGroup.vehicles.compactMap { parseAuctionDate($0.dateScheduled, timeStr: $0.time) }.first
+                                        return date
+                                    }()
+                                    let formattedTime = headerAuctionDate?.compactAuctionTime()
+                                    let sectionKey = "\(dateGroup.date)|\(locationGroup.address)"
 
-                                    ForEach(dateGroup.locations, id: \.address) { locationGroup in
-                                        let shortAddress = locationGroup.address.components(separatedBy: " Houston").first ?? locationGroup.address
-                                        let totalVehicles = locationGroup.vehicles.count
-                                        let headerAuctionDate: Date? = {
-                                            let date = locationGroup.vehicles.compactMap { parseAuctionDate($0.dateScheduled, timeStr: $0.time) }.first
-                                            return date
-                                        }()
-                                        let formattedTime = headerAuctionDate?.compactAuctionTime()
-                                        let sectionKey = "\(dateGroup.date)|\(locationGroup.address)"
+                                    favoriteLocationHeader(
+                                        shortAddress: shortAddress,
+                                        formattedTime: formattedTime,
+                                        totalVehicles: totalVehicles,
+                                        sectionKey: sectionKey
+                                    )
 
-                                        VStack(alignment: .leading, spacing: 12) {
-                                            DisclosureGroup(
-                                                isExpanded: Binding(
-                                                    get: { expandedLocations[sectionKey] ?? true },
-                                                    set: { expandedLocations[sectionKey] = $0 }
-                                                )
-                                            ) {
-                                                VStack(spacing: 8) {
-                                                    ForEach(locationGroup.vehicles) { e in
-                                                        VehicleCardView(entry: e, showAddress: false, showQuickInventory: false)
-                                                    }
-                                                }
-
-                                                HStack {
-                                                    Spacer()
-                                                    Button {
-                                                        selectedAddressForMap = locationGroup.address
-                                                        showMapAlert = true
-                                                    } label: {
-                                                        HStack(spacing: 8) {
-                                                            Image(systemName: "location.fill")
-                                                            Text("Navigate")
-                                                                .font(.subheadline.bold())
-                                                        }
-                                                        .padding(.vertical, 8)
-                                                        .padding(.horizontal, 20)
-                                                        .background(Color.blue.opacity(0.12))
-                                                        .clipShape(Capsule())
-                                                        .foregroundStyle(.blue)
-                                                    }
-                                                    .buttonStyle(.plain)
-                                                    Spacer()
-                                                }
-                                                .padding(.top, 12)
-                                            } label: {
-                                                HStack(spacing: 6) {
-                                                    Image(systemName: "mappin.and.ellipse")
-                                                        .font(.callout)
-                                                        .foregroundColor(.blue)
-
-                                                    Text(shortAddress.capitalized)
-                                                        .font(.subheadline.weight(.semibold))
-                                                        .foregroundStyle(.primary)
-                                                        .lineLimit(1)
-                                                        .truncationMode(.tail)
-
-                                                    if let formattedTime {
-                                                        Text("•")
-                                                            .foregroundColor(.primary)
-                                                        Text(formattedTime)
-                                                            .font(.subheadline.bold())
-                                                            .foregroundColor(.primary)
-                                                    }
-
-                                                    Spacer(minLength: 6)
-
-                                                    Text("\(totalVehicles) \(totalVehicles == 1 ? "vehicle" : "vehicles")")
-                                                        .padding(.horizontal, 8)
-                                                        .padding(.vertical, 4)
-                                                        .background(Color.blue)
-                                                        .foregroundColor(.white)
-                                                        .font(.caption.bold())
-                                                        .clipShape(Capsule())
-                                                }
-                                                .frame(maxWidth: .infinity, alignment: .leading)
-                                            }
-                                            .tint(.accentColor)
+                                    if expandedLocations[sectionKey] ?? true {
+                                        ForEach(Array(locationGroup.vehicles.enumerated()), id: \.element.id) { index, e in
+                                            favoriteVehicleRow(
+                                                e,
+                                                isFirstInLocation: index == 0,
+                                                isLastInLocation: index == locationGroup.vehicles.count - 1
+                                            )
                                         }
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 12)
-                                        .background(Color(UIColor.secondarySystemGroupedBackground))
-                                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                                        .shadow(color: Color.primary.opacity(0.08), radius: 6, x: 0, y: 3)
+                                        favoriteNavigateRow(address: locationGroup.address)
                                     }
                                 }
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            } header: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "calendar")
+                                        .foregroundColor(.accentColor)
+                                        .font(.caption)
+                                    Text(dateGroup.date)
+                                        .font(.headline)
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.9)
+                                    Spacer()
+                                }
                             }
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 8)
                     }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .listSectionSpacing(.custom(8))
                     .alert("Open Apple Maps", isPresented: $showMapAlert) {
                         Button("Cancel", role: .cancel) { }
                         Button("Navigate") {
