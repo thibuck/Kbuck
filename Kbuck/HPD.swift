@@ -2107,6 +2107,15 @@ struct HPDView: View {
         return Array(Set(years)).sorted()
     }
 
+    private var isPlatinumRateEligible: Bool {
+        let profileTier = supabaseService.currentProfile?.plan_tier?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return userRole == "super_admin"
+            || profileTier == "platinum"
+            || storeManager.activeSubscriptionTier == .platinum
+    }
+
     // Single reactive token — changes whenever any filter or sort option changes.
     private var activeFilterHash: String {
         "\(filterOption.rawValue)|\(sortKey.rawValue)|\(decodedLocationFilters.sorted().joined(separator: ","))|\(sortAscending)|\(selectedYear.map(String.init) ?? "All")|\(selectedMake)|\(selectedModel)|\(maxPrice)"
@@ -2842,19 +2851,31 @@ struct HPDView: View {
             let platProduct = storeManager.consumables.first(where: { $0.id == "com.kbuck.carfax.platinum" })
             let stdPrice    = stdProduct?.displayPrice  ?? "$15.99"
             let platPrice   = platProduct?.displayPrice ?? "$10.99"
-            Button("Buy 1 Report for \(stdPrice)") {
-                Task {
-                    if let product = stdProduct {
-                        _ = try? await storeManager.purchase(product)
+            if isPlatinumRateEligible {
+                Button("Buy 1 Report for \(platPrice)") {
+                    Task {
+                        if let product = platProduct {
+                            _ = try? await storeManager.purchase(product)
+                        }
                     }
                 }
-            }
-            Button("Upgrade to Platinum (Reports for \(platPrice))") {
-                showPaywall = true
+            } else {
+                Button("Buy 1 Report for \(stdPrice)") {
+                    Task {
+                        if let product = stdProduct {
+                            _ = try? await storeManager.purchase(product)
+                        }
+                    }
+                }
+                Button("Upgrade to Platinum (Reports for \(platPrice))") {
+                    showPaywall = true
+                }
             }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Get an instant vehicle history report.")
+            Text(isPlatinumRateEligible
+                 ? "Get an instant vehicle history report at your discounted Platinum rate."
+                 : "Get an instant vehicle history report.")
         }
         .alert("Legal Disclaimer", isPresented: $showLegalDisclaimer) {
             Button("Cancel", role: .cancel) {

@@ -65,8 +65,9 @@ struct VehicleCardView: View {
     @State private var showQuickDataInfo = false
 
     // Carfax
-    @State private var showCarfaxTeaser       = false
-    @State private var showCarfaxUpsellDialog = false
+    @State private var showCarfaxTeaser          = false
+    @State private var showCarfaxUpsellDialog    = false
+    @State private var showPlatinumCarfaxConfirm = false
 
     // Paywall
     @State private var showPaywall = false
@@ -86,6 +87,14 @@ struct VehicleCardView: View {
     private var odoInfo: OdoInfo? { supabaseService.odoByVIN[entry.vin] ?? supabaseService.odoByVIN[cardKey] }
     private var yearStr: String   { normalizedYear(entry.year) }
     private var processed: Bool   { lastProcessedVIN == cardKey }
+    private var isPlatinumRateEligible: Bool {
+        let profileTier = supabaseService.currentProfile?.plan_tier?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return userRole == "super_admin"
+            || profileTier == "platinum"
+            || storeManager.activeSubscriptionTier == .platinum
+    }
 
     private var shareText: String {
         var parts = ["\(yearStr) \(brandDisplayName(for: entry.make)) \(entry.model)", "VIN: \(entry.vin)"]
@@ -200,12 +209,8 @@ struct VehicleCardView: View {
                 }
                 .overlay(alignment: .trailing) {
                     Button {
-                        if storeManager.activeSubscriptionTier == .platinum || userRole == "super_admin" {
-                            Task {
-                                if let p = storeManager.consumables.first(where: { $0.id == "com.kbuck.carfax.platinum" }) {
-                                    _ = try? await storeManager.purchase(p)
-                                }
-                            }
+                        if isPlatinumRateEligible {
+                            showPlatinumCarfaxConfirm = true
                         } else {
                             showCarfaxUpsellDialog = true
                         }
@@ -478,12 +483,37 @@ struct VehicleCardView: View {
             let platProduct = storeManager.consumables.first(where: { $0.id == "com.kbuck.carfax.platinum" })
             let stdPrice    = stdProduct?.displayPrice  ?? "$15.99"
             let platPrice   = platProduct?.displayPrice ?? "$10.99"
-            Button("Buy 1 Report for \(stdPrice)") {
-                Task { if let p = stdProduct { _ = try? await storeManager.purchase(p) } }
+            if isPlatinumRateEligible {
+                Button("Buy 1 Report for \(platPrice)") {
+                    Task { if let p = platProduct { _ = try? await storeManager.purchase(p) } }
+                }
+            } else {
+                Button("Buy 1 Report for \(stdPrice)") {
+                    Task { if let p = stdProduct { _ = try? await storeManager.purchase(p) } }
+                }
+                Button("Upgrade to Platinum (Reports for \(platPrice))") { showPaywall = true }
             }
-            Button("Upgrade to Platinum (Reports for \(platPrice))") { showPaywall = true }
             Button("Cancel", role: .cancel) {}
-        } message: { Text("Get an instant vehicle history report.") }
+        } message: {
+            Text(isPlatinumRateEligible
+                 ? "Get an instant vehicle history report at your discounted Platinum rate."
+                 : "Get an instant vehicle history report.")
+        }
+
+        .alert("Carfax Report", isPresented: $showPlatinumCarfaxConfirm) {
+            let platProduct = storeManager.consumables.first(where: { $0.id == "com.kbuck.carfax.platinum" })
+            let platPrice = platProduct?.displayPrice ?? "$10.99"
+            Button("Buy 1 Report for \(platPrice)") {
+                Task {
+                    if let p = platProduct {
+                        _ = try? await storeManager.purchase(p)
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Get an instant vehicle history report at your discounted Platinum rate.")
+        }
 
         .sheet(isPresented: $showPaywall) {
             PaywallView()

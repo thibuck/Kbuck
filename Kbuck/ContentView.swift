@@ -52,15 +52,25 @@ extension View {
 // MARK: - Auth Router
 
 struct ContentView: View {
+    private let defaultHPDURLString = "https://www.houstontx.gov/police/auto_dealers_detail/Vehicles_Scheduled_For_Auction.htm"
+
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var isAuthenticated = false
     @State private var isAuthReady     = false
     @State private var didBootstrapFavorites = false
     @State private var showInitialPaywall: Bool = false
+    @State private var isPreloadingHPDCache = false
     @AppStorage("hpdRefreshTrigger") private var hpdRefreshTrigger: Int = 0
     @AppStorage("hpdUserBanned")          private var isUserBanned: Bool = false
     @AppStorage("hasSeenInitialPaywall")  private var hasSeenInitialPaywall: Bool = false
+    @AppStorage("hpdCachedEntries")       private var hpdCachedEntriesData: Data = Data()
+    @AppStorage("hpdCachedURL")           private var hpdCachedURL: String = ""
+    @AppStorage("hpdLastFetchTS")         private var hpdLastFetchTS: Double = 0
+    @AppStorage("lastHPDSyncDate")        private var lastHPDSyncDate: Double = 0
+    @AppStorage("hpdHadLastError")        private var hpdHadLastError: Bool = false
+    @AppStorage("hpdManualURLEnabled")    private var manualURLModeEnabled: Bool = false
+    @AppStorage("hpdManualURLInput")      private var hpdManualURLInput: String = ""
 
     // Persisted role — written here on sign-in, read everywhere else.
     // Defaults to "user" so no privileged UI is ever shown before the fetch resolves.
@@ -113,6 +123,7 @@ struct ContentView: View {
                         }
                         fetchRole()
                         runGlobalLifecycleSync()
+                        await preloadHPDAuctionDataIfNeeded()
                         if !hasSeenInitialPaywall && userRole != "super_admin" {
                             hasSeenInitialPaywall = true
                             showInitialPaywall = true
@@ -127,6 +138,7 @@ struct ContentView: View {
                     }
                     fetchRole()
                     runGlobalLifecycleSync()
+                    await preloadHPDAuctionDataIfNeeded(force: true)
                     if !hasSeenInitialPaywall && userRole != "super_admin" {
                         hasSeenInitialPaywall = true
                         showInitialPaywall = true
@@ -143,8 +155,11 @@ struct ContentView: View {
         }
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active, isAuthenticated else { return }
-            runGlobalLifecycleSync()
-            hpdRefreshTrigger += 1
+            Task {
+                runGlobalLifecycleSync()
+                await preloadHPDAuctionDataIfNeeded()
+                hpdRefreshTrigger += 1
+            }
         }
         .sheet(isPresented: $showInitialPaywall) {
             PaywallView()
@@ -187,6 +202,64 @@ struct ContentView: View {
                 isAuthenticated = false
                 userRole = "user"
             }
+        }
+    }
+
+    private func preloadHPDAuctionDataIfNeeded(force: Bool = false) async {
+        guard !isPreloadingHPDCache else { return }
+
+        let sourceURLString: String
+        if manualURLModeEnabled, !hpdManualURLInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            sourceURLString = hpdManualURLInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            sourceURLString = defaultHPDURLString
+        }
+
+        let isDefaultSource = sourceURLString == defaultHPDURLString
+        let alreadySyncedToday = Calendar.current.isDateInToday(Date(timeIntervalSince1970: lastHPDSyncDate))
+        if !force, isDefaultSource, alreadySyncedToday, !hpdCachedEntriesData.isEmpty {
+            return
+        }
+
+        guard let url = URL(string: sourceURLString) else { return }
+
+        isPreloadingHPDCache = true
+        defer { isPreloadingHPDCache = false }
+
+        do {
+            var request = URLRequest(url: url)
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.timeoutInterval = 60
+            request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+            request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+            request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+
+            let (data, _) = try await URLSession.shared.data(for: request)
+            guard let raw = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
+                return
+            }
+
+            let validEntries = HPDParser.parse(raw)
+                .filter { !isDateInPast($0.dateScheduled) }
+                .map { entry in
+                    var normalized = entry
+                    if let normalizedDate = HPDParser.normalizeUSDate(entry.dateScheduled) {
+                        normalized.dateScheduled = normalizedDate
+                    }
+                    return normalized
+                }
+
+            guard !validEntries.isEmpty, let encoded = try? JSONEncoder().encode(validEntries) else {
+                return
+            }
+
+            hpdCachedEntriesData = encoded
+            hpdCachedURL = sourceURLString
+            hpdLastFetchTS = Date().timeIntervalSince1970
+            lastHPDSyncDate = Date().timeIntervalSince1970
+            hpdHadLastError = false
+        } catch {
+            print("🔴 HPD preload failed: \(error.localizedDescription)")
         }
     }
 }
