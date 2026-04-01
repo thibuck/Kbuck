@@ -4,6 +4,7 @@ import EventKit
 import MapKit
 import CoreLocation
 import StoreKit
+import Supabase
 
 // MARK: - VehicleCardView
 //
@@ -27,6 +28,7 @@ struct VehicleCardView: View {
     @EnvironmentObject private var storeManager: StoreManager
     @AppStorage("userRole")         private var userRole: String = "user"
     @AppStorage("openWebInSafari") private var openWebInSafari: Bool = false
+    @StateObject private var carfaxVault = CarfaxVault.shared
 
     // MARK: Card state
     @State private var isExpanded: Bool
@@ -74,6 +76,9 @@ struct VehicleCardView: View {
     @State private var showCarfaxTeaser          = false
     @State private var showCarfaxUpsellDialog    = false
     @State private var showPlatinumCarfaxConfirm = false
+    @State private var isFetchingCarfax          = false
+    @State private var carfaxErrorMessage: String? = nil
+    @State private var showCarfaxErrorAlert      = false
 
     // Paywall
     @State private var showPaywall = false
@@ -230,16 +235,23 @@ struct VehicleCardView: View {
                 }
                 .overlay(alignment: .trailing) {
                     Button {
-                        if isPlatinumRateEligible {
-                            showPlatinumCarfaxConfirm = true
+                        if carfaxVault.getReportURL(for: entry.vin) != nil {
+                            openReport(for: entry.vin)
+                        } else if isPlatinumRateEligible || storeManager.carfaxCredits > 0 {
+                            Task { await fetchCarfaxReport() }
                         } else {
                             showCarfaxUpsellDialog = true
                         }
                     } label: {
-                        Image("carfax")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 32, height: 32)
+                        if isFetchingCarfax {
+                            ProgressView()
+                                .frame(width: 32, height: 32)
+                        } else {
+                            Image("carfax")
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 32, height: 32)
+                        }
                     }
                     .buttonStyle(.plain)
                 }
@@ -301,7 +313,8 @@ struct VehicleCardView: View {
                                         let limitStr = "\(currentLimit)"
                                         isQuotaExceededAlert = true
                                         if let offer = nextUpgradeOffer() {
-                                            extractionErrorMessage = "You've reached your daily limit of \(limitStr). Upgrade to \(offer.name) to unlock up to \(offer.limit) daily extractions."
+                                            let upgrade = "Upgrade to \(offer.name) to unlock up to \(offer.limit) daily extractions."
+                                            extractionErrorMessage = "You've reached your daily limit of \(limitStr). \(upgrade)"
                                         } else {
                                             extractionErrorMessage = "You've reached your daily limit of \(limitStr) for your current plan."
                                         }
@@ -378,6 +391,17 @@ struct VehicleCardView: View {
                     }
                     .buttonStyle(.bordered)
                     .frame(maxWidth: .infinity)
+
+                    if carfaxVault.getReportURL(for: entry.vin) != nil {
+                        Button {
+                            openReport(for: entry.vin)
+                        } label: {
+                            Image(systemName: "doc.text.fill")
+                                .foregroundColor(.blue)
+                        }
+                        .buttonStyle(.bordered)
+                        .frame(maxWidth: .infinity)
+                    }
                 }
             }
         }
@@ -528,6 +552,14 @@ struct VehicleCardView: View {
             Text("Get an instant vehicle history report at your discounted Platinum rate.")
         }
 
+        .alert("Carfax Error", isPresented: $showCarfaxErrorAlert) {
+            Button("OK", role: .cancel) {
+                carfaxErrorMessage = nil
+            }
+        } message: {
+            Text(carfaxErrorMessage ?? "Unable to load the Carfax report.")
+        }
+
         .sheet(isPresented: $showPaywall) {
             PaywallView()
                 .onChange(of: storeManager.purchasedSubscriptions) { _, _ in
@@ -553,6 +585,140 @@ struct VehicleCardView: View {
         if digits.isEmpty { return "no odo" }
         guard let val = Int(digits), val > 0 else { return "no odo" }
         return "\(Int(round(Double(val) / 1000.0)))k"
+    }
+
+    private func openReport(for vin: String) {
+        guard let url = carfaxVault.getReportURL(for: vin) else { return }
+        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+    }
+
+    private func fetchCarfaxReport() async {
+        let vin = normalizeVIN(entry.vin)
+        guard !vin.isEmpty else { return }
+        guard !isFetchingCarfax else { return }
+
+        isFetchingCarfax = true
+        defer { isFetchingCarfax = false }
+
+        let requestPayload: [String: String] = [
+            "vin": vin,
+            "year": normalizedYear(entry.year),
+            "make": brandDisplayName(for: entry.make),
+            "model": preferredCarfaxModel(),
+            "raw_make": entry.make,
+            "raw_model": entry.model
+        ]
+        do {
+            let accessToken = supabase.auth.currentSession?.accessToken ?? ""
+            let anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRuZXNjdXFlZ21laGF6dWZmbXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2OTI4ODEsImV4cCI6MjA4OTI2ODg4MX0.LszstZi962himWPuoSWEXR9Xzhbl2ncewJSGzTnoeIg"
+
+            guard let url = URL(string: "https://tnescuqegmehazuffmte.supabase.co/functions/v1/fetch-vhr") else {
+                presentCarfaxError("Invalid edge function URL")
+                return
+            }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+            request.setValue(anonKey, forHTTPHeaderField: "apikey")
+            request.httpBody = try JSONEncoder().encode(requestPayload)
+
+            let (data, _) = try await URLSession.shared.data(for: request)
+
+            guard let html = extractCarfaxHTML(from: data) else {
+                presentCarfaxError("Missing HTML payload in fetch-vhr response")
+                return
+            }
+
+            let cheapvhrReportID = extractCheapVHRReportID(from: data)
+            carfaxVault.saveReport(
+                vin: vin,
+                html: html,
+                year: entry.year,
+                make: entry.make,
+                model: entry.model,
+                cheapvhrReportID: cheapvhrReportID
+            )
+            if let url = carfaxVault.getReportURL(for: vin) {
+                UIApplication.shared.open(url, options: [:], completionHandler: nil)
+            }
+        } catch {
+            presentCarfaxError(error.localizedDescription)
+        }
+    }
+
+    private func extractCheapVHRReportID(from data: Data) -> String? {
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data),
+            let dictionary = object as? [String: Any]
+        else {
+            return nil
+        }
+
+        let candidateKeys = ["cheapvhr_report_id", "cheapvhrReportID", "report_id", "reportId", "id"]
+        for key in candidateKeys {
+            if let reportID = dictionary[key] as? String,
+               !reportID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return reportID.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+
+        if let dataDictionary = dictionary["data"] as? [String: Any] {
+            for key in candidateKeys {
+                if let reportID = dataDictionary[key] as? String,
+                   !reportID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return reportID.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func extractCarfaxHTML(from data: Data) -> String? {
+        if let htmlString = String(data: data, encoding: .utf8),
+           htmlString.localizedCaseInsensitiveContains("<html") {
+            return htmlString
+        }
+
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data),
+            let dictionary = object as? [String: Any]
+        else {
+            return nil
+        }
+
+        let candidateKeys = ["html", "report_html", "reportHTML", "payload", "body"]
+        for key in candidateKeys {
+            if let html = dictionary[key] as? String, html.localizedCaseInsensitiveContains("<html") {
+                return html
+            }
+        }
+
+        if let dataDictionary = dictionary["data"] as? [String: Any] {
+            for key in candidateKeys {
+                if let html = dataDictionary[key] as? String, html.localizedCaseInsensitiveContains("<html") {
+                    return html
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func presentCarfaxError(_ details: String) {
+        carfaxErrorMessage = details
+        showCarfaxErrorAlert = true
+    }
+
+    private func preferredCarfaxModel() -> String {
+        if let realModel = odoInfo?.realModel?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !realModel.isEmpty {
+            return realModel
+        }
+
+        return normalizedModelName(for: entry.model, make: entry.make)
     }
 
     /// Mirrors HPDView.sanitizedAddressForMaps(_:) exactly.

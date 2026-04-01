@@ -55,6 +55,7 @@ struct ContentView: View {
     private let defaultHPDURLString = "https://www.houstontx.gov/police/auto_dealers_detail/Vehicles_Scheduled_For_Auction.htm"
 
     @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var carfaxVault = CarfaxVault.shared
 
     @State private var isAuthenticated = false
     @State private var isAuthReady     = false
@@ -99,9 +100,14 @@ struct ContentView: View {
                     HPDView(favoritesOnly: true, externalLocationFilter: .constant(nil))
                         .tabItem { Label("FAVORITES", systemImage: "star.fill") }
                         .tag(2)
+                    if !carfaxVault.savedReports.isEmpty {
+                        CarfaxVaultView()
+                            .tabItem { Label("MY REPORTS", systemImage: "doc.text.fill") }
+                            .tag(3)
+                    }
                     HPDSettingsView()
                         .tabItem { Label("SETTINGS", systemImage: "gearshape.fill") }
-                        .tag(3)
+                        .tag(4)
                 }
             } else {
                 LoginView()

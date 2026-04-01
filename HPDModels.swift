@@ -284,6 +284,109 @@ func brandAssetName(for rawMake: String) -> String? {
     return nil
 }
 
+func normalizedModelName(for rawModel: String, make rawMake: String) -> String {
+    let make = rawMake.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let model = rawModel.trimmingCharacters(in: .whitespacesAndNewlines)
+    let code = model.lowercased()
+
+    guard !code.isEmpty else { return rawModel }
+
+    if make.contains("nissan") || make.hasPrefix("niss") {
+        switch code {
+        case "versa", "vers":
+            return "Versa"
+        case "sent", "sentr", "sentra":
+            return "Sentra"
+        case "alti", "altima":
+            return "Altima"
+        case "maxi", "maxima":
+            return "Maxima"
+        case "rogu", "rogue":
+            return "Rogue"
+        case "mura", "murano":
+            return "Murano"
+        case "path", "pathfinder":
+            return "Pathfinder"
+        case "fron", "front", "frontier":
+            return "Frontier"
+        case "tita", "titan":
+            return "Titan"
+        case "armd", "armada":
+            return "Armada"
+        default:
+            break
+        }
+    }
+
+    if make.contains("toyota") || make.hasPrefix("toyo") {
+        switch code {
+        case "coro", "corol", "corolla":
+            return "Corolla"
+        case "camr", "camry":
+            return "Camry"
+        case "rav4", "rav":
+            return "RAV4"
+        case "taco", "tacom", "tacoma":
+            return "Tacoma"
+        case "tund", "tundra":
+            return "Tundra"
+        case "4run", "4runner":
+            return "4Runner"
+        default:
+            break
+        }
+    }
+
+    if make.contains("honda") || make.hasPrefix("hond") {
+        switch code {
+        case "civi", "civic":
+            return "Civic"
+        case "acco", "accord":
+            return "Accord"
+        case "crv", "cr-v":
+            return "CR-V"
+        case "odys", "odyssey":
+            return "Odyssey"
+        case "pilo", "pilot":
+            return "Pilot"
+        default:
+            break
+        }
+    }
+
+    if make.contains("ford") || make.hasPrefix("ford") {
+        switch code {
+        case "f150", "f-150":
+            return "F-150"
+        case "expl", "explo", "explorer":
+            return "Explorer"
+        case "must", "musta", "mustang":
+            return "Mustang"
+        case "edge":
+            return "Edge"
+        default:
+            break
+        }
+    }
+
+    if make.contains("chevrolet") || make.contains("chevy") || make.hasPrefix("chev") {
+        switch code {
+        case "silv", "silve", "silverado":
+            return "Silverado"
+        case "mali", "malib", "malibu":
+            return "Malibu"
+        case "equi", "equin", "equinox":
+            return "Equinox"
+        case "taho", "tahoe":
+            return "Tahoe"
+        default:
+            break
+        }
+    }
+
+    return model.capitalized
+}
+
 func normalizedSearchTerm(_ text: String) -> String {
     text
         .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
