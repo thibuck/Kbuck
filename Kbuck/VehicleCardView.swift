@@ -522,11 +522,21 @@ struct VehicleCardView: View {
             let platPrice   = platProduct?.displayPrice ?? "$10.99"
             if isPlatinumRateEligible {
                 Button("Buy 1 Report for \(platPrice)") {
-                    Task { if let p = platProduct { _ = try? await storeManager.purchase(p) } }
+                    Task {
+                        if let p = platProduct,
+                           (try? await storeManager.purchase(p)) == true {
+                            await fetchCarfaxReport()
+                        }
+                    }
                 }
             } else {
                 Button("Buy 1 Report for \(stdPrice)") {
-                    Task { if let p = stdProduct { _ = try? await storeManager.purchase(p) } }
+                    Task {
+                        if let p = stdProduct,
+                           (try? await storeManager.purchase(p)) == true {
+                            await fetchCarfaxReport()
+                        }
+                    }
                 }
                 Button("Upgrade to Platinum (Reports for \(platPrice))") { showPaywall = true }
             }
@@ -542,8 +552,9 @@ struct VehicleCardView: View {
             let platPrice = platProduct?.displayPrice ?? "$10.99"
             Button("Buy 1 Report for \(platPrice)") {
                 Task {
-                    if let p = platProduct {
-                        _ = try? await storeManager.purchase(p)
+                    if let p = platProduct,
+                       (try? await storeManager.purchase(p)) == true {
+                        await fetchCarfaxReport()
                     }
                 }
             }

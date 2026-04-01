@@ -46,7 +46,7 @@ async function getUserAccess(supabase: ReturnType<typeof createClient>, userId: 
     const planTier = String(profile.plan_tier ?? "").toLowerCase();
     const role = String(profile.role ?? "").toLowerCase();
 
-    if (role === "super_admin" || planTier === "platinum") {
+    if (role === "super_admin") {
         return { allowed: true, planTier, role, consumeCredit: false };
     }
 
@@ -85,6 +85,23 @@ async function consumeUserCredit(supabase: ReturnType<typeof createClient>, user
         .eq("user_id", userId);
 
     if (updateError) return { ok: false, error: updateError.message };
+    return { ok: true };
+}
+
+async function consumeCreditIfNeeded(
+    supabase: ReturnType<typeof createClient>,
+    userId: string,
+    vin: string,
+    access: { consumeCredit?: boolean },
+) {
+    if (!access.consumeCredit) return { ok: true };
+
+    const consume = await consumeUserCredit(supabase, userId);
+    if (!consume.ok) {
+        await logCarfaxAttempt(supabase, { user_id: userId, vin, status: "credit_failed", source: "blocked", detail: consume.error });
+        return { ok: false, error: consume.error ?? "Unable to consume credit." };
+    }
+
     return { ok: true };
 }
 // --------------------------------------------------------
@@ -155,6 +172,11 @@ Deno.serve(async (req: Request) => {
     }
 
     if (cached?.carfax_html) {
+        const consume = await consumeCreditIfNeeded(supabase, user.id, vin, access);
+        if (!consume.ok) {
+            return jsonResponse({ error: consume.error ?? "Unable to consume credit." }, 403);
+        }
+
         await logCarfaxAttempt(supabase, { user_id: user.id, vin, status: "served", source: "cache" });
         return jsonResponse({
             yearMakeModel: cached.year_make_model,
@@ -166,16 +188,7 @@ Deno.serve(async (req: Request) => {
         }, 200);
     }
 
-    // 3. COBRO DE CRÉDITO
-    if (access.consumeCredit) {
-        const consume = await consumeUserCredit(supabase, user.id);
-        if (!consume.ok) {
-            await logCarfaxAttempt(supabase, { user_id: user.id, vin, status: "credit_failed", source: "blocked", detail: consume.error });
-            return jsonResponse({ error: consume.error ?? "Unable to consume credit." }, 403);
-        }
-    }
-
-    // 4. LLAMADA A CHEAPVHR (CON TÚNEL INQUEBRANTABLE)
+    // 3. LLAMADA A CHEAPVHR (CON TÚNEL INQUEBRANTABLE)
     const apiUrl = `https://api.cheapvhr.com/v1/carfax/vin/${encodeURIComponent(vin)}/html`;
 
     let apiResponse: Response;
@@ -232,7 +245,7 @@ Deno.serve(async (req: Request) => {
 
     console.log(`✅ [ÉXITO] CheapVHR respondió. Limpiamos los diccionarios rebeldes para iOS.`);
 
-    // 6. GUARDADO EN CACHÉ Y RESPUESTA
+    // 4. GUARDADO EN CACHÉ
     const nowIso = new Date().toISOString();
     const { error: upsertError } = await supabase.from("global_vin_cache_kbuck").upsert(
         {
@@ -248,6 +261,12 @@ Deno.serve(async (req: Request) => {
     if (upsertError) {
         await logCarfaxAttempt(supabase, { user_id: user.id, vin, status: "cache_write_failed", source: "upstream", detail: upsertError.message });
         return jsonResponse({ error: "Failed to update cache.", details: upsertError.message }, 500);
+    }
+
+    // 5. COBRO DE CRÉDITO
+    const consume = await consumeCreditIfNeeded(supabase, user.id, vin, access);
+    if (!consume.ok) {
+        return jsonResponse({ error: consume.error ?? "Unable to consume credit." }, 403);
     }
 
     await logCarfaxAttempt(supabase, { user_id: user.id, vin, status: "served", source: "upstream" });
