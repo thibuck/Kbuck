@@ -129,6 +129,14 @@ struct FavoriteRow: Codable {
     var private_value: String?
 }
 
+struct QuickDataCacheRow: Codable {
+    var vin: String
+    var odometer: String?
+    var test_date: String?
+    var private_value: String?
+    var real_model: String?
+}
+
 // MARK: - Service
 
 @MainActor final class SupabaseService: ObservableObject {
@@ -146,6 +154,43 @@ struct FavoriteRow: Codable {
 
     /// Synchronous shortcut — currentUser is backed by in-memory session, zero network cost.
     private var currentUserID: UUID? { supabase.auth.currentUser?.id }
+
+    private func normalizedTierKey(_ rawTier: String?) -> String {
+        let normalized = rawTier?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalized?.isEmpty == false ? normalized! : "free"
+    }
+
+    var serverTierKey: String {
+        normalizedTierKey(currentProfile?.plan_tier)
+    }
+
+    var serverTierDisplayName: String {
+        serverTierKey.capitalized
+    }
+
+    var isServerSuperAdmin: Bool {
+        (UserDefaults.standard.string(forKey: "userRole") ?? "user") == "super_admin"
+    }
+
+    var hasServerPaidPlan: Bool {
+        isServerSuperAdmin || ["silver", "gold", "platinum"].contains(serverTierKey)
+    }
+
+    var hasServerPlatinumAccess: Bool {
+        isServerSuperAdmin || serverTierKey == "platinum"
+    }
+
+    func serverDailyLimit(forTierKey tierKey: String? = nil) -> Int {
+        let effectiveTierKey = normalizedTierKey(tierKey ?? serverTierKey)
+        if isServerSuperAdmin { return Int.max }
+        return tierConfigs[effectiveTierKey]?.daily_fetch_limit ?? 3
+    }
+
+    var currentServerDailyLimit: Int {
+        serverDailyLimit()
+    }
 
     // MARK: - Init
 
@@ -225,6 +270,8 @@ struct FavoriteRow: Codable {
     func clearAllLocalState() {
         favorites.removeAll()
         odoByVIN.removeAll()
+        currentProfile = nil
+        currentTier = nil
         persistFavorites()   // write empty state to UserDefaults immediately
         persistOdo()
         print("🧹 SUPABASE: local state cleared")
@@ -457,6 +504,76 @@ struct FavoriteRow: Codable {
         UserDefaults.standard.set(try? JSONEncoder().encode(odoByVIN), forKey: odoKey)
     }
 
+    // MARK: - Global VIN Quick Data Cache
+
+    private func quickDataInfo(from row: QuickDataCacheRow) -> OdoInfo? {
+        let odometer = row.odometer?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let testDate = row.test_date?.dateOnly ?? ""
+        let privateValue = row.private_value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let realModel = row.real_model?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !odometer.isEmpty, !privateValue.isEmpty else { return nil }
+
+        return OdoInfo(
+            odometer: odometer,
+            testDate: testDate,
+            privateValue: formatPrivateValueForDisplay(privateValue),
+            realModel: realModel?.isEmpty == false ? realModel : nil
+        )
+    }
+
+    func loadQuickDataCacheFromSupabase(forVIN vin: String) async -> Bool {
+        let cleanVIN = normalizeVIN(vin)
+        guard !cleanVIN.isEmpty else { return false }
+
+        do {
+            let rows: [QuickDataCacheRow] = try await supabase
+                .rpc("get_quick_data_cache", params: ["target_vin": cleanVIN])
+                .execute()
+                .value
+
+            guard let row = rows.first, let info = quickDataInfo(from: row) else {
+                return false
+            }
+
+            setOdoInfo(info, forVIN: cleanVIN)
+            print("✅ QUICK DATA CACHE: Loaded cached quick data for \(cleanVIN)")
+            return true
+        } catch {
+            print("🔴 QUICK DATA CACHE: load failed for \(cleanVIN): \(error)")
+            return false
+        }
+    }
+
+    func saveQuickDataCacheToSupabase(forVIN vin: String) async {
+        let cleanVIN = normalizeVIN(vin)
+        guard !cleanVIN.isEmpty else { return }
+        guard let info = odoByVIN[cleanVIN] else { return }
+
+        let odometer = info.odometer.trimmingCharacters(in: .whitespacesAndNewlines)
+        let testDate = info.testDate.dateOnly
+        let privateValue = info.privateValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let realModel = info.realModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        guard !odometer.isEmpty, !privateValue.isEmpty else { return }
+
+        do {
+            _ = try await supabase.rpc(
+                "upsert_quick_data_cache",
+                params: [
+                    "target_vin": cleanVIN,
+                    "target_odometer": odometer,
+                    "target_test_date": testDate,
+                    "target_private_value": privateValue,
+                    "target_real_model": realModel
+                ]
+            ).execute()
+            print("✅ QUICK DATA CACHE: Saved quick data for \(cleanVIN)")
+        } catch {
+            print("🔴 QUICK DATA CACHE: save failed for \(cleanVIN): \(error)")
+        }
+    }
+
     // MARK: - Remote Tier Config
 
     /// Fetches subscription_tiers_kbuck and populates tierConfigs.
@@ -523,26 +640,18 @@ struct FavoriteRow: Codable {
 
     func recordExtractionUsage(vin: String) {
         Task(priority: .background) {
-            guard let user = supabase.auth.currentUser else { return }
-            _ = try? await supabase.rpc("increment_fetch_count", params: ["user_uuid": user.id.uuidString]).execute()
+            _ = try? await supabase.rpc("increment_fetch_count", params: ["target_vin": normalizeVIN(vin)]).execute()
         }
     }
 
     /// Increments daily and lifetime counters via a single DB RPC.
-    /// Super Admins are exempt — this function returns immediately without touching the DB.
-    func incrementQuota() async {
-        guard let user = supabase.auth.currentUser else { return }
-
-        // Read role from UserDefaults (written at login by KbuckApp / LoginView)
-        let role = UserDefaults.standard.string(forKey: "userRole") ?? "user"
-        guard role != "super_admin" else {
-            print("🔵 QUOTA: super_admin — skipping increment_fetch_count")
-            return
-        }
+    /// Server-side SQL is the source of truth for role, plan, and quota enforcement.
+    func incrementQuota(vin: String) async {
+        guard supabase.auth.currentUser != nil else { return }
 
         do {
             try await supabase
-                .rpc("increment_fetch_count", params: ["user_uuid": user.id.uuidString])
+                .rpc("increment_fetch_count", params: ["target_vin": normalizeVIN(vin)])
                 .execute()
             await fetchCurrentProfile()
         } catch {

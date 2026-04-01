@@ -2,6 +2,35 @@ import SwiftUI
 
 // MARK: - Data models
 
+private struct InlineSearchBar: View {
+    @Binding var text: String
+    let placeholder: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+
+            TextField(placeholder, text: $text)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled(true)
+
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color(.systemGray6))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
 private struct LocationEntry: Identifiable {
     let id       = UUID()
     let location: String
@@ -17,6 +46,12 @@ private struct DateCard: Identifiable {
     let locations: [LocationEntry]               // sorted by count desc
 }
 
+private struct BrandFilterOption: Identifiable {
+    let id: String
+    let make: String
+    let count: Int
+}
+
 // MARK: - View
 
 struct HomeSummaryView: View {
@@ -28,18 +63,28 @@ struct HomeSummaryView: View {
     @AppStorage("hpdRefreshTrigger") private var hpdRefreshTrigger: Int = 0
     @State private var cachedGroupedSummaries: [DateCard] = []
     @State private var cachedActiveVehicleCount: Int = 0
+    @State private var cachedBrandOptions: [BrandFilterOption] = []
 
     // MARK: - Collapse state
 
     @State private var expandedDates: Set<String> = []
+    @State private var isBrandFilterExpanded: Bool = false
+    @State private var selectedBrandFilters: Set<String> = []
+    @State private var isBrandSearchVisible: Bool = false
+    @State private var brandSearchText: String = ""
 
     @EnvironmentObject private var supabaseService: SupabaseService
     @EnvironmentObject private var storeManager: StoreManager
     @AppStorage("userRole") private var userRole: String = "user"
     @State private var showQuotaSheet: Bool = false
+    @State private var showBrandLimitAlert: Bool = false
+
+    private var activeHomeSearchText: String {
+        brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     private var currentTierKey: String {
-        supabaseService.currentProfile?.plan_tier?.lowercased() ?? storeManager.activeSubscriptionTier.tierKey
+        supabaseService.serverTierKey
     }
 
     private var toolbarTierKey: String? {
@@ -50,24 +95,15 @@ struct HomeSummaryView: View {
     }
 
     private var currentTierDisplayName: String {
-        currentTierKey.capitalized
+        supabaseService.serverTierDisplayName
+    }
+
+    private var hasBrandFilterAccess: Bool {
+        supabaseService.hasServerPlatinumAccess
     }
 
     private var currentTierLimit: Int {
-        if let remoteLimit = supabaseService.tierConfigs[currentTierKey]?.daily_fetch_limit {
-            return remoteLimit
-        }
-
-        switch currentTierKey {
-        case "silver":
-            return 10
-        case "gold":
-            return 30
-        case "platinum":
-            return 200
-        default:
-            return 3
-        }
+        supabaseService.currentServerDailyLimit
     }
 
     // MARK: - Address normalisation (mirrors HPDView.sanitizedAddressForMaps + streetNumberKey)
@@ -173,6 +209,33 @@ struct HomeSummaryView: View {
             .sorted { $0.dateObj < $1.dateObj }
     }
 
+    private static func buildBrandOptions(from entries: [HPDEntry]) -> [BrandFilterOption] {
+        var makeCounts: [String: Int] = [:]
+
+        for entry in entries {
+            guard !isDateInPast(entry.dateScheduled) else { continue }
+
+            let cleanAddress = normalizeAddress(entry.lotAddress)
+            guard !cleanAddress.isEmpty else { continue }
+
+            let makeKey = entry.make
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .uppercased()
+            guard !makeKey.isEmpty else { continue }
+
+            makeCounts[makeKey, default: 0] += 1
+        }
+
+        return makeCounts
+            .map { BrandFilterOption(id: $0.key, make: $0.key, count: $0.value) }
+            .sorted {
+                if $0.count == $1.count {
+                    return brandDisplayName(for: $0.make) < brandDisplayName(for: $1.make)
+                }
+                return $0.count > $1.count
+            }
+    }
+
     private func defaultExpandedDate(from grouped: [DateCard]) -> String? {
         guard !grouped.isEmpty else { return nil }
 
@@ -197,10 +260,45 @@ struct HomeSummaryView: View {
         else {
             cachedGroupedSummaries = []
             cachedActiveVehicleCount = 0
+            cachedBrandOptions = []
             expandedDates = []
             return
         }
-        let grouped = Self.buildGroupedSummaries(from: decoded)
+
+        let searchQuery = brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let searchFilteredEntries: [HPDEntry]
+        if searchQuery.isEmpty {
+            searchFilteredEntries = decoded
+        } else {
+            searchFilteredEntries = decoded.filter { entry in
+                vehicleMatchesSearch(searchQuery, entry: entry)
+            }
+        }
+
+        let brandOptions = Self.buildBrandOptions(from: searchFilteredEntries)
+        cachedBrandOptions = brandOptions
+
+        let availableMakes = Set(brandOptions.map(\.make))
+        let validSelectedMakes = selectedBrandFilters.intersection(availableMakes)
+        if validSelectedMakes != selectedBrandFilters {
+            selectedBrandFilters = validSelectedMakes
+        }
+
+        if !hasBrandFilterAccess, !selectedBrandFilters.isEmpty {
+            selectedBrandFilters = []
+        }
+
+        let filteredEntries: [HPDEntry]
+        if hasBrandFilterAccess, !selectedBrandFilters.isEmpty {
+            filteredEntries = searchFilteredEntries.filter {
+                let makeKey = $0.make.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+                return selectedBrandFilters.contains(makeKey)
+            }
+        } else {
+            filteredEntries = searchFilteredEntries
+        }
+
+        let grouped = Self.buildGroupedSummaries(from: filteredEntries)
         cachedGroupedSummaries = grouped
         cachedActiveVehicleCount = grouped.reduce(0) { $0 + $1.locations.reduce(0) { $0 + $1.count } }
         if let defaultDate = defaultExpandedDate(from: grouped) {
@@ -221,6 +319,9 @@ struct HomeSummaryView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 16) {
+                            if hasBrandFilterAccess, !cachedBrandOptions.isEmpty {
+                                brandFilterCard
+                            }
                             ForEach(cachedGroupedSummaries) { card in
                                 dateCard(card)
                             }
@@ -237,10 +338,10 @@ struct HomeSummaryView: View {
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 6) {
-                        Image(systemName: "chart.bar.xaxis")
+                        Image(systemName: "building.columns.circle.fill")
                             .foregroundColor(.accentColor)
                             .font(.headline)
-                        Text("Dashboard (\(cachedActiveVehicleCount))")
+                        Text("HPD Auction (\(cachedActiveVehicleCount))")
                             .font(.headline.bold())
                             .foregroundStyle(.primary)
                     }
@@ -275,6 +376,11 @@ struct HomeSummaryView: View {
                     .presentationDragIndicator(.visible)
             }
         }
+        .alert("Brand Limit Reached", isPresented: $showBrandLimitAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("You can select up to 5 brands at a time.")
+        }
         .task {
             recomputeSummaries()
             if supabaseService.currentTier == nil {
@@ -284,6 +390,201 @@ struct HomeSummaryView: View {
         .onChange(of: hpdCachedEntriesData) { _, _ in
             recomputeSummaries()
         }
+        .onChange(of: selectedBrandFilters) { _, _ in
+            recomputeSummaries()
+        }
+        .onChange(of: brandSearchText) { _, _ in
+            if brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                isBrandSearchVisible = false
+            }
+            recomputeSummaries()
+        }
+        .onChange(of: currentTierKey) { _, _ in
+            if !hasBrandFilterAccess {
+                selectedBrandFilters = []
+            }
+            recomputeSummaries()
+        }
+        .onChange(of: userRole) { _, _ in
+            if !hasBrandFilterAccess {
+                selectedBrandFilters = []
+            }
+            recomputeSummaries()
+        }
+    }
+
+    // MARK: - Platinum brand filter
+
+    private var brandFilterCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.snappy) {
+                    isBrandFilterExpanded.toggle()
+                    if !isBrandFilterExpanded, brandSearchText.isEmpty {
+                        isBrandSearchVisible = false
+                    }
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                        .foregroundStyle(.blue)
+                        .font(.title3)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Brand Filter")
+                            .font(.headline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(selectedBrandFilters.isEmpty
+                             ? "Platinum filter by up to 5 brands"
+                             : "\(selectedBrandFilters.count) selected")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if !selectedBrandFilters.isEmpty {
+                        Text("\(selectedBrandFilters.count)/5")
+                            .font(.caption.bold())
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.blue.opacity(0.1))
+                            .foregroundStyle(.blue)
+                            .clipShape(Capsule())
+                    }
+                    Image(systemName: isBrandFilterExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+
+            if isBrandFilterExpanded {
+                Divider()
+                    .padding(.top, 12)
+
+                HStack(spacing: 10) {
+                    Text(brandSearchText.isEmpty
+                         ? "Optional search by year, make, model or VIN"
+                         : "Searching inventory")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    Button {
+                        withAnimation(.snappy) {
+                            if isBrandSearchVisible, brandSearchText.isEmpty {
+                                isBrandSearchVisible = false
+                            } else {
+                                isBrandSearchVisible = true
+                            }
+                        }
+                    } label: {
+                        Label(
+                            isBrandSearchVisible || !brandSearchText.isEmpty ? "Hide Search" : "Search",
+                            systemImage: isBrandSearchVisible || !brandSearchText.isEmpty ? "xmark.circle" : "magnifyingglass"
+                        )
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.blue)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.top, 14)
+
+                if isBrandSearchVisible || !brandSearchText.isEmpty {
+                    InlineSearchBar(
+                        text: $brandSearchText,
+                        placeholder: "Year, make, model or VIN"
+                    )
+                    .padding(.top, 12)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
+                if cachedBrandOptions.isEmpty, !brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("No matching brands for that search.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 12)
+                }
+
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 78), spacing: 10)], spacing: 10) {
+                    ForEach(cachedBrandOptions) { option in
+                        brandFilterChip(for: option)
+                    }
+                }
+                .padding(.top, 14)
+
+                if !selectedBrandFilters.isEmpty {
+                    Button("Clear All Brands") {
+                        selectedBrandFilters.removeAll()
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.blue)
+                    .padding(.top, 14)
+                }
+            }
+        }
+        .padding(20)
+        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .shadow(color: Color.primary.opacity(0.08), radius: 10, x: 0, y: 5)
+    }
+
+    private func brandFilterChip(for option: BrandFilterOption) -> some View {
+        let isSelected = selectedBrandFilters.contains(option.make)
+
+        return Button {
+            toggleBrandFilter(option.make)
+        } label: {
+            VStack(spacing: 8) {
+                Group {
+                    if let asset = brandAssetName(for: option.make),
+                       let image = UIImage(named: asset) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 28, height: 28)
+                    } else {
+                        Image(systemName: "car.fill")
+                            .font(.title3)
+                            .frame(width: 28, height: 28)
+                    }
+                }
+                .foregroundStyle(isSelected ? .white : .secondary)
+
+                Text(brandDisplayName(for: option.make))
+                    .font(.caption2.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+
+                Text("\(option.count)")
+                    .font(.caption2)
+                    .foregroundStyle(isSelected ? .white.opacity(0.85) : .secondary)
+            }
+            .foregroundStyle(isSelected ? .white : .primary)
+            .frame(maxWidth: .infinity, minHeight: 92)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 10)
+            .background(isSelected ? Color.blue : Color(uiColor: .systemBackground))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(isSelected ? Color.blue : Color.primary.opacity(0.08), lineWidth: 1)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func toggleBrandFilter(_ make: String) {
+        if selectedBrandFilters.contains(make) {
+            selectedBrandFilters.remove(make)
+            return
+        }
+
+        guard selectedBrandFilters.count < 5 else {
+            showBrandLimitAlert = true
+            return
+        }
+
+        selectedBrandFilters.insert(make)
     }
 
     // MARK: - Apple Wallet-style collapsible date card
@@ -333,7 +634,8 @@ struct HomeSummaryView: View {
                         NavigationLink(destination: FilteredAuctionListView(
                             date: card.date,
                             location: locEntry.location,
-                            brand: nil
+                            brand: nil,
+                            initialSearchText: activeHomeSearchText
                         )) {
                             let headerAuctionDate = locEntry.vehicles.compactMap { parseAuctionDate($0.dateScheduled, timeStr: $0.time) }.first
                             HStack(alignment: .top, spacing: 8) {
@@ -369,7 +671,8 @@ struct HomeSummaryView: View {
                                 NavigationLink(destination: FilteredAuctionListView(
                                     date: card.date,
                                     location: locEntry.location,
-                                    brand: makeEntry.make
+                                    brand: makeEntry.make,
+                                    initialSearchText: activeHomeSearchText
                                 )) {
                                     HStack(spacing: 8) {
                                         if let asset = brandAssetName(for: makeEntry.make),

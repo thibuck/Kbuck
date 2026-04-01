@@ -90,11 +90,12 @@ struct ContentView: View {
             } else if isAuthenticated {
                 TabView(selection: $selectedTab) {
                     HomeSummaryView(selectedTab: $selectedTab, targetLocationFilter: $crossTabLocationFilter)
-                        .tabItem { Label("Dashboard", systemImage: "chart.bar.xaxis") }
+                        .tabItem { Label("HOME", systemImage: "car.circle.fill") }
                         .tag(0)
-                    HPDView(externalLocationFilter: $crossTabLocationFilter)
-                        .tabItem { Label("HPD AUCTION", systemImage: "car.fill") }
-                        .tag(1)
+                    // Temporarily hidden from the app UI, but kept in code for later reuse.
+                    // HPDView(externalLocationFilter: $crossTabLocationFilter)
+                    //     .tabItem { Label("HPD AUCTION", systemImage: "car.fill") }
+                    //     .tag(1)
                     HPDView(favoritesOnly: true, externalLocationFilter: .constant(nil))
                         .tabItem { Label("FAVORITES", systemImage: "star.fill") }
                         .tag(2)
@@ -116,6 +117,7 @@ struct ContentView: View {
                     isAuthenticated = session != nil
                     isAuthReady     = true
                     if session != nil {
+                        await supabaseService.fetchCurrentProfile()
                         await supabaseService.syncCurrentUserAppVersion()
                         if !didBootstrapFavorites {
                             await supabaseService.syncFetchFavoritesFromSupabase()
@@ -131,6 +133,7 @@ struct ContentView: View {
                     }
                 case .signedIn:
                     isAuthenticated = true
+                    await supabaseService.fetchCurrentProfile()
                     await supabaseService.syncCurrentUserAppVersion()
                     if !didBootstrapFavorites {
                         await supabaseService.syncFetchFavoritesFromSupabase()
@@ -147,6 +150,7 @@ struct ContentView: View {
                     isAuthenticated = false
                     didBootstrapFavorites = false
                     isUserBanned = false
+                    supabaseService.clearAllLocalState()
                     userRole = "user"   // clear role so no stale admin access persists
                 default:
                     break

@@ -12,28 +12,15 @@ struct QuotaUsageView: View {
     }
 
     private var currentTierKey: String {
-        supabaseService.currentProfile?.plan_tier?.lowercased() ?? storeManager.activeSubscriptionTier.tierKey
+        supabaseService.serverTierKey
     }
 
     private var currentTierDisplayName: String {
-        currentTierKey.capitalized
+        supabaseService.serverTierDisplayName
     }
 
     private var dailyLimit: Int {
-        if let remoteLimit = supabaseService.tierConfigs[currentTierKey]?.daily_fetch_limit {
-            return remoteLimit
-        }
-
-        switch currentTierKey {
-        case "silver":
-            return 10
-        case "gold":
-            return 30
-        case "platinum":
-            return 200
-        default:
-            return 3
-        }
+        supabaseService.currentServerDailyLimit
     }
 
     private var progressTint: Color {

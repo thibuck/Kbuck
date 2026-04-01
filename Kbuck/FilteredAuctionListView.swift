@@ -12,12 +12,21 @@ struct FilteredAuctionListView: View {
     let date:     String
     let location: String
     let brand:    String?
+    let initialSearchText: String
 
     @AppStorage("hpdCachedEntries") private var hpdCachedEntriesData: Data = Data()
     @EnvironmentObject private var supabaseService: SupabaseService
     @EnvironmentObject private var storeManager:   StoreManager
 
-    @State private var searchText = ""
+    @State private var searchText: String
+
+    init(date: String, location: String, brand: String?, initialSearchText: String = "") {
+        self.date = date
+        self.location = location
+        self.brand = brand
+        self.initialSearchText = initialSearchText
+        self._searchText = State(initialValue: initialSearchText)
+    }
 
     // MARK: - Base filter (date + location + brand)
 
@@ -28,13 +37,15 @@ struct FilteredAuctionListView: View {
 
         let locationKey = streetKey(location)
         let brandUpper  = brand?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let shouldHideFavorites = searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
         return all.filter { entry in
             let sameDate     = entry.dateScheduled.trimmingCharacters(in: .whitespacesAndNewlines) == date
             let sameLocation = streetKey(entry.lotAddress) == locationKey
             let sameBrand    = brandUpper == nil
                 || entry.make.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == brandUpper!
-            return sameDate && sameLocation && sameBrand
+            let isFavorite   = supabaseService.favorites.contains(normalizeVIN(entry.vin))
+            return sameDate && sameLocation && sameBrand && (!shouldHideFavorites || !isFavorite)
         }
     }
 
@@ -46,13 +57,9 @@ struct FilteredAuctionListView: View {
 
         // 2. Search Filter (checking the human-readable brand name)
         if !searchText.isEmpty {
-            let searchLower = searchText.lowercased()
             filtered = filtered.filter { entry in
-                let mappedBrand = brandDisplayName(for: entry.make).lowercased()
-                return entry.vin.lowercased().contains(searchLower) ||
-                    entry.year.lowercased().contains(searchLower) ||
-                    mappedBrand.contains(searchLower) ||
-                    entry.model.lowercased().contains(searchLower)
+                let odoInfo = supabaseService.odoByVIN[entry.vin] ?? supabaseService.odoByVIN[normalizeVIN(entry.vin)]
+                return vehicleMatchesSearch(searchText, entry: entry, odoInfo: odoInfo)
             }
         }
 

@@ -283,3 +283,40 @@ func brandAssetName(for rawMake: String) -> String? {
 
     return nil
 }
+
+func normalizedSearchTerm(_ text: String) -> String {
+    text
+        .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+}
+
+func vehicleMatchesSearch(_ query: String, entry: HPDEntry, odoInfo: OdoInfo? = nil) -> Bool {
+    let normalizedQuery = normalizedSearchTerm(query)
+    guard !normalizedQuery.isEmpty else { return true }
+
+    let tokens = normalizedQuery
+        .split(separator: " ")
+        .map(String.init)
+        .filter { !$0.isEmpty }
+
+    let makeDisplay = brandDisplayName(for: entry.make)
+    let realModel = odoInfo?.realModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let searchableFields = [
+        entry.vin,
+        normalizedYear(entry.year),
+        entry.make,
+        makeDisplay,
+        entry.model,
+        realModel,
+        entry.lotName,
+        entry.lotAddress,
+        entry.dateScheduled
+    ]
+        .map(normalizedSearchTerm)
+        .filter { !$0.isEmpty }
+
+    return tokens.allSatisfy { token in
+        searchableFields.contains { $0.contains(token) }
+    }
+}

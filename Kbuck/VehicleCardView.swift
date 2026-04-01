@@ -93,13 +93,14 @@ struct VehicleCardView: View {
     private var odoInfo: OdoInfo? { supabaseService.odoByVIN[entry.vin] ?? supabaseService.odoByVIN[cardKey] }
     private var yearStr: String   { normalizedYear(entry.year) }
     private var processed: Bool   { lastProcessedVIN == cardKey }
+    private var currentServerDailyLimit: Int {
+        supabaseService.currentServerDailyLimit
+    }
     private var isPlatinumRateEligible: Bool {
-        let profileTier = supabaseService.currentProfile?.plan_tier?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        return userRole == "super_admin"
-            || profileTier == "platinum"
-            || storeManager.activeSubscriptionTier == .platinum
+        supabaseService.hasServerPlatinumAccess
+    }
+    private var hasStatVinAccess: Bool {
+        supabaseService.hasServerPaidPlan
     }
 
     private var shareText: String {
@@ -110,6 +111,19 @@ struct VehicleCardView: View {
             if price != "N/A" { parts.append("Value: \(price)") }
         }
         return parts.joined(separator: "\n")
+    }
+
+    private func nextUpgradeOffer() -> (name: String, limit: String)? {
+        switch supabaseService.serverTierKey {
+        case "free":
+            return ("Silver", "\(supabaseService.serverDailyLimit(forTierKey: "silver"))")
+        case "silver":
+            return ("Gold", "\(supabaseService.serverDailyLimit(forTierKey: "gold"))")
+        case "gold":
+            return ("Platinum", "Unlimited")
+        default:
+            return nil
+        }
     }
 
     // MARK: - Body
@@ -277,30 +291,20 @@ struct VehicleCardView: View {
                                 return
                             }
                             Task {
-                                let configs = supabaseService.tierConfigs
-                                let currentTier = storeManager.activeSubscriptionTier
-                                let currentLimit = storeManager.dailyLimit(from: configs)
+                                let currentLimit = currentServerDailyLimit
                                 let currentUsage = supabaseService.currentProfile?.effectiveDailyUsage ?? 0
-                                let isUnlimited = userRole == "super_admin" || currentTier == .platinum
+                                let isUnlimited = currentLimit == Int.max
 
                                 if !isUnlimited && currentUsage >= currentLimit {
                                     await MainActor.run {
                                         UINotificationFeedbackGenerator().notificationOccurred(.error)
                                         let limitStr = "\(currentLimit)"
-                                        let (nextName, nextLimit): (String, String)
-                                        switch currentTier {
-                                        case .none:
-                                            nextName  = "Silver"
-                                            nextLimit = "\(configs["silver"]?.daily_fetch_limit ?? 10)"
-                                        case .silver:
-                                            nextName  = "Gold"
-                                            nextLimit = "\(configs["gold"]?.daily_fetch_limit ?? 30)"
-                                        case .gold, .platinum:
-                                            nextName  = "Platinum"
-                                            nextLimit = "Unlimited"
-                                        }
                                         isQuotaExceededAlert = true
-                                        extractionErrorMessage = "You've reached your daily limit of \(limitStr). Upgrade to \(nextName) to unlock up to \(nextLimit) daily extractions."
+                                        if let offer = nextUpgradeOffer() {
+                                            extractionErrorMessage = "You've reached your daily limit of \(limitStr). Upgrade to \(offer.name) to unlock up to \(offer.limit) daily extractions."
+                                        } else {
+                                            extractionErrorMessage = "You've reached your daily limit of \(limitStr) for your current plan."
+                                        }
                                         showExtractionErrorAlert = true
                                     }
                                     return
@@ -315,20 +319,16 @@ struct VehicleCardView: View {
                                     } else {
                                         UINotificationFeedbackGenerator().notificationOccurred(.error)
                                         let limitStr = currentLimit == Int.max ? "Unlimited" : "\(currentLimit)"
-                                        let (nextName, nextLimit): (String, String)
-                                        switch currentTier {
-                                        case .none:
-                                            nextName  = "Silver"
-                                            nextLimit = "\(configs["silver"]?.daily_fetch_limit ?? 10)"
-                                        case .silver:
-                                            nextName  = "Gold"
-                                            nextLimit = "\(configs["gold"]?.daily_fetch_limit ?? 30)"
-                                        case .gold, .platinum:
-                                            nextName  = "Platinum"
-                                            nextLimit = "Unlimited"
-                                        }
                                         isQuotaExceededAlert     = true
-                                        extractionErrorMessage   = limitStatus.reason ?? "You've reached your daily limit of \(limitStr). Upgrade to \(nextName) to unlock up to \(nextLimit) daily extractions."
+                                        if nextUpgradeOffer() == nil {
+                                            extractionErrorMessage = "You've reached your daily limit of \(limitStr) for your current plan."
+                                        } else if let reason = limitStatus.reason {
+                                            extractionErrorMessage = reason
+                                        } else if let offer = nextUpgradeOffer() {
+                                            extractionErrorMessage = "You've reached your daily limit of \(limitStr). Upgrade to \(offer.name) to unlock up to \(offer.limit) daily extractions."
+                                        } else {
+                                            extractionErrorMessage = "You've reached your daily limit of \(limitStr) for your current plan."
+                                        }
                                         showExtractionErrorAlert = true
                                     }
                                 }
@@ -360,14 +360,16 @@ struct VehicleCardView: View {
                         .frame(maxWidth: .infinity)
                     }
 
-                    Button {
-                        haptic(.light)
-                        showWebAlert = true
-                    } label: {
-                        Image(systemName: "globe")
+                    if hasStatVinAccess {
+                        Button {
+                            haptic(.light)
+                            showWebAlert = true
+                        } label: {
+                            Image(systemName: "globe")
+                        }
+                        .buttonStyle(.bordered)
+                        .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
-                    .frame(maxWidth: .infinity)
 
                     Button {
                         showQuickDataInfo = true
@@ -407,7 +409,9 @@ struct VehicleCardView: View {
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
                 }
             }
-        } message: { Text(pendingFavoriteLabel) }
+        } message: {
+            Text("\(pendingFavoriteLabel)\n\nThis vehicle will be moved to Favorites.")
+        }
 
         .alert("Agregar al calendario", isPresented: $showCalendarConfirm) {
             Button("Cancelar", role: .cancel) { pendingCalendarEntry = nil }
@@ -427,10 +431,12 @@ struct VehicleCardView: View {
                 isQuotaExceededAlert   = false
             }
             if isQuotaExceededAlert {
-                Button("Upgrade Now") {
-                    extractionErrorMessage = nil
-                    isQuotaExceededAlert   = false
-                    showPaywall            = true
+                if nextUpgradeOffer() != nil {
+                    Button("Upgrade Now") {
+                        extractionErrorMessage = nil
+                        isQuotaExceededAlert   = false
+                        showPaywall            = true
+                    }
                 }
             }
         } message: { Text(extractionErrorMessage ?? "An unknown error occurred.") }
@@ -472,10 +478,10 @@ struct VehicleCardView: View {
         .alert("Data Information", isPresented: $showQuickDataInfo) {
             Button("OK", role: .cancel) {}
         } message: {
-            let isUnlimited = userRole == "super_admin" || storeManager.activeSubscriptionTier == .platinum
-            let limit = storeManager.dailyLimit(from: supabaseService.tierConfigs)
+            let isUnlimited = currentServerDailyLimit == Int.max
+            let limit = currentServerDailyLimit
             let limitStr = isUnlimited ? "unlimited" : "\(limit)"
-            Text("• Mileage: Last recorded odometer during state inspection.\n• Value: Estimated DMV Private Party Value.\n\nUSAGE LIMITS:\nTo ensure system stability, you are limited to \(limitStr) successful data extractions per day, and a maximum of 5 successful extractions per specific vehicle. Failed attempts do not count against your limit.\n\nNOTE: This is historical data from third-party public records. We do not guarantee its accuracy.")
+            Text("• Mileage: Last recorded odometer during state inspection.\n• Value: Estimated DMV Private Party Value.\n\nUSAGE LIMITS:\nTo ensure system stability, you are limited to \(limitStr) successful data extractions per day, and a maximum of 3 successful extractions per specific vehicle. Failed attempts do not count against your limit.\n\nNOTE: This is historical data from third-party public records. We do not guarantee its accuracy.")
         }
 
         .alert("Carfax Report", isPresented: $showCarfaxTeaser) {
@@ -797,7 +803,24 @@ struct ExtractionFlowView: View {
             }
         }
         .animation(.snappy, value: exState)
-        .onAppear { startWatchdog(for: .fetchingOdometer, token: cancelToken) }
+        .onAppear {
+            Task {
+                if await supabaseService.loadQuickDataCacheFromSupabase(forVIN: mileageVIN) {
+                    await supabaseService.incrementQuota(vin: mileageVIN)
+                    await MainActor.run {
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                        VINFailureTracker.shared.clearFailures(vin: mileageVIN)
+                        lastProcessedVIN = mileageVIN
+                        dismiss()
+                    }
+                    return
+                }
+
+                await MainActor.run {
+                    startWatchdog(for: .fetchingOdometer, token: cancelToken)
+                }
+            }
+        }
         .alert("Extraction Failed", isPresented: $showErrorAlert) {
             Button("OK", role: .cancel) { dismiss() }
         } message: { Text(errorMessage ?? "") }
@@ -834,7 +857,10 @@ struct ExtractionFlowView: View {
                 info.privateValue = price
                 supabaseService.setOdoInfo(info, forVIN: v)
                 VINFailureTracker.shared.clearFailures(vin: v)
-                Task { await supabaseService.incrementQuota() }
+                Task {
+                    await supabaseService.saveQuickDataCacheToSupabase(forVIN: v)
+                    await supabaseService.incrementQuota(vin: v)
+                }
                 lastProcessedVIN = v
             }
             dismiss()
