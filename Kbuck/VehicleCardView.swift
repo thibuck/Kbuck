@@ -71,6 +71,8 @@ struct VehicleCardView: View {
 
     // Quick Data Info
     @State private var showQuickDataInfo = false
+    @State private var transientFavoriteDetail: String? = nil
+    @State private var transientFavoriteDetailToken = UUID()
 
     // Carfax
     @State private var showCarfaxTeaser          = false
@@ -131,6 +133,57 @@ struct VehicleCardView: View {
         }
     }
 
+    private var relativeInspectionText: String {
+        guard let odo = odoInfo else { return "" }
+        return odo.testDate.dateOnly
+            .timeAgoShort()
+            .replacingOccurrences(of: "(", with: "")
+            .replacingOccurrences(of: ")", with: "")
+    }
+
+    @ViewBuilder
+    private func favoriteMetricCard(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title.uppercased())
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color(uiColor: .tertiarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func favoriteInlineValueRow(title: String, value: String, systemImage: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title.uppercased())
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Text(value)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -153,7 +206,8 @@ struct VehicleCardView: View {
                 Spacer(minLength: 0)
 
                 if let rawOdo = odoInfo?.odometer,
-                   let odoInt = Int(rawOdo.filter(\.isNumber)) {
+                   let odoInt = Int(rawOdo.filter(\.isNumber)),
+                   !isFavoritesContext {
                     let odoInK = odoInt / 1000
                     HStack(spacing: 4) {
                         Image(systemName: "fuelpump.fill")
@@ -207,21 +261,27 @@ struct VehicleCardView: View {
                 Divider()
 
                 // VIN row — tap to copy
-                HStack(spacing: 6) {
-                    Image(systemName: "tag.fill")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Text("VIN: \(entry.vin)")
-                        .font(.footnote)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.9)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if copiedVIN == entry.vin {
-                        Text("Copied!")
-                            .font(.caption2)
-                            .foregroundStyle(.green)
+                Group {
+                    if isFavoritesContext {
+                        favoriteInlineValueRow(title: "VIN", value: entry.vin, systemImage: "tag.fill")
+                    } else {
+                        HStack(spacing: 6) {
+                            Image(systemName: "tag.fill")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Text("VIN: \(entry.vin)")
+                                .font(.footnote)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.9)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            if copiedVIN == entry.vin {
+                                Text("Copied!")
+                                    .font(.caption2)
+                                    .foregroundStyle(.green)
+                            }
+                            Spacer(minLength: 0)
+                        }
                     }
-                    Spacer(minLength: 0)
                 }
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -237,7 +297,7 @@ struct VehicleCardView: View {
                     Button {
                         if carfaxVault.getReportURL(for: entry.vin) != nil {
                             openReport(for: entry.vin)
-                        } else if isPlatinumRateEligible || storeManager.carfaxCredits > 0 {
+                        } else if storeManager.carfaxCredits > 0 {
                             Task { await fetchCarfaxReport() }
                         } else {
                             showCarfaxUpsellDialog = true
@@ -258,35 +318,77 @@ struct VehicleCardView: View {
 
                 // Odometer / inspection date / private value
                 if let odo = odoInfo {
-                    HStack(spacing: 6) {
-                        Image(systemName: "fuelpump.fill")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        Text(odo.odometer.formatWithCommas() + " miles")
-                            .font(.footnote)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.9)
+                    if isFavoritesContext {
+                        HStack(spacing: 10) {
+                            Button {
+                                let relative = relativeInspectionText.isEmpty ? "" : " (\(relativeInspectionText))"
+                                showTransientFavoriteDetail("\(odo.testDate.dateOnly)\(relative)")
+                            } label: {
+                                favoriteMetricCard(
+                                    title: "Miles",
+                                    value: "\((Int(odo.odometer.filter(\.isNumber)) ?? 0) / 1000)k"
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            favoriteMetricCard(
+                                title: "Price",
+                                value: odo.privateValue.formatAsCurrency()
+                            )
+                        }
+
+                        if let transientFavoriteDetail {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("LAST INSPECTION")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                Text(transientFavoriteDetail)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(2)
+                                    .minimumScaleFactor(0.8)
+                            }
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 9)
+                            .background(Color(uiColor: .tertiarySystemGroupedBackground))
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+                    } else {
+                        HStack(spacing: 6) {
+                            Image(systemName: "fuelpump.fill")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                            Text(odo.odometer.formatWithCommas() + " miles")
+                                .font(.footnote)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.9)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
-                    HStack(spacing: 6) {
-                        Image(systemName: "clock.fill")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        Text("\(odo.testDate.dateOnly) \(odo.testDate.dateOnly.timeAgoShort())")
-                            .font(.footnote)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.9)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    if !isFavoritesContext {
+                        HStack(spacing: 6) {
+                            Image(systemName: "clock.fill")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                            Text("\(odo.testDate.dateOnly) \(odo.testDate.dateOnly.timeAgoShort())")
+                                .font(.footnote)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.9)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
-                    HStack(spacing: 6) {
-                        Image(systemName: "banknote.fill")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        Text(odo.privateValue.formatAsCurrency())
-                            .font(.footnote)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.9)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    if !isFavoritesContext {
+                        HStack(spacing: 6) {
+                            Image(systemName: "banknote.fill")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                            Text(odo.privateValue.formatAsCurrency())
+                                .font(isFavoritesContext ? .subheadline.weight(.semibold) : .footnote)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.9)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
                 }
 
@@ -522,21 +624,11 @@ struct VehicleCardView: View {
             let platPrice   = platProduct?.displayPrice ?? "$10.99"
             if isPlatinumRateEligible {
                 Button("Buy 1 Report for \(platPrice)") {
-                    Task {
-                        if let p = platProduct,
-                           (try? await storeManager.purchase(p)) == true {
-                            await fetchCarfaxReport()
-                        }
-                    }
+                    Task { await purchaseAndFetchCarfax(preferredProductID: "com.kbuck.carfax.platinum") }
                 }
             } else {
                 Button("Buy 1 Report for \(stdPrice)") {
-                    Task {
-                        if let p = stdProduct,
-                           (try? await storeManager.purchase(p)) == true {
-                            await fetchCarfaxReport()
-                        }
-                    }
+                    Task { await purchaseAndFetchCarfax(preferredProductID: "com.kbuck.carfax.standard") }
                 }
                 Button("Upgrade to Platinum (Reports for \(platPrice))") { showPaywall = true }
             }
@@ -551,12 +643,7 @@ struct VehicleCardView: View {
             let platProduct = storeManager.consumables.first(where: { $0.id == "com.kbuck.carfax.platinum" })
             let platPrice = platProduct?.displayPrice ?? "$10.99"
             Button("Buy 1 Report for \(platPrice)") {
-                Task {
-                    if let p = platProduct,
-                       (try? await storeManager.purchase(p)) == true {
-                        await fetchCarfaxReport()
-                    }
-                }
+                Task { await purchaseAndFetchCarfax(preferredProductID: "com.kbuck.carfax.platinum") }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -589,6 +676,24 @@ struct VehicleCardView: View {
 
     private func haptic(_ style: UIImpactFeedbackGenerator.FeedbackStyle = .medium) {
         UIImpactFeedbackGenerator(style: style).impactOccurred()
+    }
+
+    private func showTransientFavoriteDetail(_ value: String) {
+        if transientFavoriteDetail == value {
+            transientFavoriteDetailToken = UUID()
+            transientFavoriteDetail = nil
+            return
+        }
+
+        let token = UUID()
+        transientFavoriteDetailToken = token
+        transientFavoriteDetail = value
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard transientFavoriteDetailToken == token else { return }
+            transientFavoriteDetail = nil
+        }
     }
 
     private func formatOdoK(_ raw: String) -> String {
@@ -716,6 +821,30 @@ struct VehicleCardView: View {
         }
 
         return nil
+    }
+
+    private func purchaseAndFetchCarfax(preferredProductID productID: String) async {
+        var product = storeManager.consumables.first(where: { $0.id == productID })
+        if product == nil {
+            await storeManager.requestProducts()
+            product = storeManager.consumables.first(where: { $0.id == productID })
+        }
+
+        guard let product else {
+            presentCarfaxError("Unable to load the Carfax purchase option from the App Store.")
+            return
+        }
+
+        do {
+            if try await storeManager.purchase(product) {
+                await fetchCarfaxReport()
+            }
+        } catch {
+            let message = error.localizedDescription
+            if !message.isEmpty {
+                presentCarfaxError(message)
+            }
+        }
     }
 
     private func presentCarfaxError(_ details: String) {

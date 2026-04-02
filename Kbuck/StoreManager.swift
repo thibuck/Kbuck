@@ -12,6 +12,7 @@ final class StoreManager: ObservableObject {
     @Published var consumables: [Product] = []
     @Published var purchasedSubscriptions: [Product] = []
     @Published var carfaxCredits: Int = 0
+    @Published var nextRenewalTier: SubscriptionTier? = nil
     @Published var isLoading: Bool = false
     @Published var errorMessage: String? = nil
 
@@ -76,6 +77,19 @@ final class StoreManager: ObservableObject {
         }
     }
 
+    private func tier(for productID: String) -> SubscriptionTier {
+        switch productID {
+        case "com.kbuck.platinum.monthly":
+            return .platinum
+        case "com.kbuck.gold.monthly":
+            return .gold
+        case "com.kbuck.silver.monthly":
+            return .silver
+        default:
+            return .none
+        }
+    }
+
     // MARK: - Dynamic Limit Resolver
 
     /// Resolves the daily fetch limit for the active tier.
@@ -136,18 +150,6 @@ final class StoreManager: ObservableObject {
 
         errorMessage = nil
 
-        let tierConfigs: [TierConfig]
-        do {
-            tierConfigs = try await supabase
-                .from("subscription_tiers_kbuck")
-                .select("tier_name, daily_fetch_limit, max_favorites")
-                .execute()
-                .value
-        } catch {
-            errorMessage = "DB Error: \(error.localizedDescription)"
-            return
-        }
-
         let productIdMapping: [String: String] = [
             "silver": "com.kbuck.silver.monthly",
             "gold": "com.kbuck.gold.monthly",
@@ -156,13 +158,28 @@ final class StoreManager: ObservableObject {
             "carfax platinum": "com.kbuck.carfax.platinum"
         ]
 
-        let requestedIDs = tierConfigs.compactMap { config -> String? in
-            let normalizedName = config.tier_name.lowercased()
-            return productIdMapping[normalizedName]
+        var requestedIDs = Set(StoreManager.consumableIDs)
+
+        do {
+            let tierConfigs: [TierConfig] = try await supabase
+                .from("subscription_tiers_kbuck")
+                .select("tier_name, daily_fetch_limit, max_favorites")
+                .execute()
+                .value
+
+            for config in tierConfigs {
+                let normalizedName = config.tier_name.lowercased()
+                if let productID = productIdMapping[normalizedName] {
+                    requestedIDs.insert(productID)
+                }
+            }
+        } catch {
+            // Keep going with the local StoreKit configuration even if Supabase is unavailable.
+            requestedIDs.formUnion(StoreManager.subscriptionIDs)
         }
 
         do {
-            let storeProducts = try await Product.products(for: requestedIDs)
+            let storeProducts = try await Product.products(for: Array(requestedIDs))
 
             var fetchedSubscriptions: [Product] = []
             var fetchedConsumables: [Product] = []
@@ -240,10 +257,12 @@ final class StoreManager: ObservableObject {
     // MARK: - Supabase Plan Sync
 
     private func syncPlanToSupabase(productID: String) async {
+        guard StoreManager.subscriptionIDs.contains(productID) else { return }
+
         let tier: String
-        if productID.contains("platinum") { tier = "platinum" }
-        else if productID.contains("gold") { tier = "gold" }
-        else if productID.contains("silver") { tier = "silver" }
+        if productID == "com.kbuck.platinum.monthly" { tier = "platinum" }
+        else if productID == "com.kbuck.gold.monthly" { tier = "gold" }
+        else if productID == "com.kbuck.silver.monthly" { tier = "silver" }
         else { return }
 
         guard let uid = supabase.auth.currentUser?.id else { return }
@@ -307,6 +326,30 @@ final class StoreManager: ObservableObject {
 
         purchasedSubscriptions = activeSubs
         carfaxCredits = credits
+        nextRenewalTier = await fetchNextRenewalTier(currentTier: activeSubscriptionTier)
+    }
+
+    private func fetchNextRenewalTier(currentTier: SubscriptionTier) async -> SubscriptionTier? {
+        guard let groupID = subscriptions.compactMap({ $0.subscription?.subscriptionGroupID }).first else {
+            return nil
+        }
+
+        guard let statuses = try? await Product.SubscriptionInfo.status(for: groupID) else {
+            return nil
+        }
+
+        for status in statuses {
+            guard status.state == .subscribed || status.state == .inGracePeriod else { continue }
+            guard let renewalInfo = try? checkVerified(status.renewalInfo) else { continue }
+
+            let nextProductID = renewalInfo.autoRenewPreference ?? renewalInfo.currentProductID
+            let nextTier = tier(for: nextProductID)
+            if nextTier != .none, nextTier != currentTier {
+                return nextTier
+            }
+        }
+
+        return nil
     }
 
     // MARK: - Restore Purchases

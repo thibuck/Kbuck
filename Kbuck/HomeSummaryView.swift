@@ -72,6 +72,7 @@ struct HomeSummaryView: View {
     @State private var selectedBrandFilters: Set<String> = []
     @State private var isBrandSearchVisible: Bool = false
     @State private var brandSearchText: String = ""
+    @State private var brandFilterAutoCollapseToken = UUID()
 
     @EnvironmentObject private var supabaseService: SupabaseService
     @EnvironmentObject private var storeManager: StoreManager
@@ -340,9 +341,9 @@ struct HomeSummaryView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "building.columns.circle.fill")
                             .foregroundColor(.accentColor)
-                            .font(.headline)
+                            .font(.subheadline)
                         Text("HPD Auction (\(cachedActiveVehicleCount))")
-                            .font(.headline.bold())
+                            .font(.headline)
                             .foregroundStyle(.primary)
                     }
                 }
@@ -391,9 +392,15 @@ struct HomeSummaryView: View {
             recomputeSummaries()
         }
         .onChange(of: selectedBrandFilters) { _, _ in
+            if isBrandFilterExpanded {
+                scheduleBrandFilterAutoCollapse()
+            }
             recomputeSummaries()
         }
         .onChange(of: brandSearchText) { _, _ in
+            if isBrandFilterExpanded {
+                scheduleBrandFilterAutoCollapse()
+            }
             if brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 isBrandSearchVisible = false
             }
@@ -418,9 +425,12 @@ struct HomeSummaryView: View {
     private var brandFilterCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.snappy) {
-                    isBrandFilterExpanded.toggle()
-                    if !isBrandFilterExpanded, brandSearchText.isEmpty {
+                isBrandFilterExpanded.toggle()
+                if isBrandFilterExpanded {
+                    scheduleBrandFilterAutoCollapse()
+                } else {
+                    brandFilterAutoCollapseToken = UUID()
+                    if brandSearchText.isEmpty {
                         isBrandSearchVisible = false
                     }
                 }
@@ -428,21 +438,21 @@ struct HomeSummaryView: View {
                 HStack(spacing: 10) {
                     Image(systemName: "line.3.horizontal.decrease.circle.fill")
                         .foregroundStyle(.blue)
-                        .font(.title3)
+                        .font(.subheadline)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Brand Filter")
-                            .font(.headline.weight(.semibold))
+                        .font(.headline)
                             .foregroundStyle(.primary)
-                        Text(selectedBrandFilters.isEmpty
-                             ? "Platinum filter by up to 5 brands"
-                             : "\(selectedBrandFilters.count) selected")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        if !selectedBrandFilters.isEmpty {
+                            Text("\(selectedBrandFilters.count) selected")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     Spacer()
                     if !selectedBrandFilters.isEmpty {
                         Text("\(selectedBrandFilters.count)/5")
-                            .font(.caption.bold())
+                            .font(.caption2.weight(.semibold))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .background(Color.blue.opacity(0.1))
@@ -460,43 +470,11 @@ struct HomeSummaryView: View {
                 Divider()
                     .padding(.top, 12)
 
-                HStack(spacing: 10) {
-                    Text(brandSearchText.isEmpty
-                         ? "Optional search by year, make, model or VIN"
-                         : "Searching inventory")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Spacer()
-
-                    Button {
-                        withAnimation(.snappy) {
-                            if isBrandSearchVisible, brandSearchText.isEmpty {
-                                isBrandSearchVisible = false
-                            } else {
-                                isBrandSearchVisible = true
-                            }
-                        }
-                    } label: {
-                        Label(
-                            isBrandSearchVisible || !brandSearchText.isEmpty ? "Hide Search" : "Search",
-                            systemImage: isBrandSearchVisible || !brandSearchText.isEmpty ? "xmark.circle" : "magnifyingglass"
-                        )
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.blue)
-                    }
-                    .buttonStyle(.plain)
-                }
+                InlineSearchBar(
+                    text: $brandSearchText,
+                    placeholder: "Year, make, model or VIN"
+                )
                 .padding(.top, 14)
-
-                if isBrandSearchVisible || !brandSearchText.isEmpty {
-                    InlineSearchBar(
-                        text: $brandSearchText,
-                        placeholder: "Year, make, model or VIN"
-                    )
-                    .padding(.top, 12)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                }
 
                 if cachedBrandOptions.isEmpty, !brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text("No matching brands for that search.")
@@ -528,13 +506,24 @@ struct HomeSummaryView: View {
         .shadow(color: Color.primary.opacity(0.08), radius: 10, x: 0, y: 5)
     }
 
+    private func scheduleBrandFilterAutoCollapse() {
+        let token = UUID()
+        brandFilterAutoCollapseToken = token
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard brandFilterAutoCollapseToken == token, isBrandFilterExpanded else { return }
+            isBrandFilterExpanded = false
+        }
+    }
+
     private func brandFilterChip(for option: BrandFilterOption) -> some View {
         let isSelected = selectedBrandFilters.contains(option.make)
 
         return Button {
             toggleBrandFilter(option.make)
         } label: {
-            VStack(spacing: 8) {
+            VStack(spacing: 6) {
                 Group {
                     if let asset = brandAssetName(for: option.make),
                        let image = UIImage(named: asset) {
@@ -553,22 +542,22 @@ struct HomeSummaryView: View {
                 Text(brandDisplayName(for: option.make))
                     .font(.caption2.weight(.semibold))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.75)
+                    .minimumScaleFactor(0.8)
 
                 Text("\(option.count)")
-                    .font(.caption2)
+                    .font(.caption2.weight(.medium))
                     .foregroundStyle(isSelected ? .white.opacity(0.85) : .secondary)
             }
             .foregroundStyle(isSelected ? .white : .primary)
-            .frame(maxWidth: .infinity, minHeight: 92)
+            .frame(maxWidth: .infinity, minHeight: 84)
             .padding(.horizontal, 8)
-            .padding(.vertical, 10)
-            .background(isSelected ? Color.blue : Color(uiColor: .systemBackground))
+            .padding(.vertical, 8)
+            .background(isSelected ? Color.blue : Color(uiColor: .secondarySystemGroupedBackground))
             .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(isSelected ? Color.blue : Color.primary.opacity(0.08), lineWidth: 1)
             }
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
     }
@@ -606,18 +595,14 @@ struct HomeSummaryView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "calendar")
                         .foregroundColor(.accentColor)
-                        .font(.title3)
+                        .font(.subheadline)
                     Text(card.date)
-                        .font(.title3.bold())
+                        .font(.headline)
                         .foregroundStyle(.primary)
                     Spacer()
                     Text("\(totalForDate) total")
-                        .font(.caption.bold())
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.accentColor.opacity(0.1))
-                        .foregroundColor(.accentColor)
-                        .clipShape(Capsule())
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                         .font(.caption.bold())
                         .foregroundStyle(.secondary)
@@ -641,27 +626,28 @@ struct HomeSummaryView: View {
                             HStack(alignment: .top, spacing: 8) {
                                 Image(systemName: "mappin.and.ellipse")
                                     .foregroundColor(.blue)
-                                    .font(.subheadline)
+                                    .font(.caption)
                                     .padding(.top, 2)
-                                Text(locEntry.location)
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(.primary)
-                                    .lineLimit(2)
-                                if let headerAuctionDate = headerAuctionDate {
-                                    Text("•")
-                                        .foregroundColor(.primary)
-                                    Text(headerAuctionDate.compactAuctionTime())
-                                        .font(.subheadline.bold())
-                                        .foregroundColor(.primary)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack(spacing: 6) {
+                                        Text(
+                                            headerAuctionDate.map {
+                                                "\(locEntry.location) - \($0.compactAuctionTime())"
+                                            } ?? locEntry.location
+                                        )
+                                            .font(.headline)
+                                            .foregroundStyle(.primary)
+                                            .lineLimit(1)
+                                            .minimumScaleFactor(0.8)
+                                        Spacer(minLength: 0)
+                                        Text("\(locEntry.count) total")
+                                            .font(.subheadline)
+                                            .foregroundStyle(.secondary)
+                                            .fixedSize()
+                                    }
+
                                 }
                                 Spacer()
-                                Text("\(locEntry.count) vehicle\(locEntry.count == 1 ? "" : "s")")
-                                    .font(.caption.bold())
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(Color.blue)
-                                    .foregroundColor(.white)
-                                    .clipShape(Capsule())
                             }
                         }
                         .buttonStyle(.plain)
@@ -687,12 +673,12 @@ struct HomeSummaryView: View {
                                                 .foregroundStyle(.secondary)
                                         }
                                         Text(brandDisplayName(for: makeEntry.make))
-                                            .font(.subheadline)
+                                            .font(.subheadline.weight(.semibold))
                                             .foregroundStyle(.primary)
                                         Spacer()
                                         HStack(spacing: 4) {
                                             Text("\(makeEntry.count)")
-                                                .font(.subheadline)
+                                                .font(.subheadline.weight(.semibold))
                                                 .foregroundStyle(.secondary)
                                             Image(systemName: "chevron.right")
                                                 .font(.caption2.bold())
@@ -706,10 +692,18 @@ struct HomeSummaryView: View {
                         }
                         .padding(.top, 4)
                     }
+                    .padding(16)
+                    .background(Color(uiColor: .tertiarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(Color.primary.opacity(0.05), lineWidth: 1)
+                    }
                     .padding(.top, 12)
 
                     if locEntry.id != card.locations.last?.id {
-                        Divider().padding(.top, 4)
+                        Color.clear
+                            .frame(height: 6)
                     }
                 }
             }
@@ -728,7 +722,7 @@ struct HomeSummaryView: View {
                 .font(.system(size: 48))
                 .foregroundStyle(.secondary)
             Text("No Data Available")
-                .font(.title3.bold())
+                .font(.headline)
             Text("Fetch auction data from the HPD tab to populate the dashboard.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)

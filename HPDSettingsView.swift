@@ -779,6 +779,11 @@ struct HPDSettingsView: View {
         currentProfileTierDisplay ?? currentTierDisplayName
     }
 
+    private var nextRenewalPlanLabel: String? {
+        guard let nextTier = storeManager.nextRenewalTier, nextTier != .none else { return nil }
+        return nextTier.displayName
+    }
+
     private var heroBackgroundColors: [Color] {
         if colorScheme == .dark {
             return [
@@ -920,6 +925,12 @@ struct HPDSettingsView: View {
                                     .font(.subheadline)
                                     .foregroundStyle(heroSecondaryTextColor)
                                     .lineLimit(1)
+                                if let nextRenewalPlanLabel {
+                                    Text("Next Renewal: \(nextRenewalPlanLabel)")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(heroMutedTextColor)
+                                        .lineLimit(1)
+                                }
                             }
 
                             Spacer(minLength: 0)
@@ -958,7 +969,8 @@ struct HPDSettingsView: View {
                                             .frame(maxWidth: .infinity)
                                             .padding(.vertical, 12)
                                     }
-                                    .buttonStyle(.plain)
+                                    .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                    .buttonStyle(.borderless)
                                     .foregroundStyle(heroPrimaryTextColor)
                                     .background(heroSecondaryButtonBackground)
                                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -1174,6 +1186,23 @@ struct HPDSettingsView: View {
                     }
             }
             .manageSubscriptionsSheet(isPresented: $showManageSubscriptions)
+            .onChange(of: storeManager.purchasedSubscriptions) { _, _ in
+                if showManageSubscriptions {
+                    showManageSubscriptions = false
+                }
+                Task {
+                    await supabaseService.fetchTierConfigs()
+                    await supabaseService.fetchCurrentProfile()
+                }
+            }
+            .onChange(of: showManageSubscriptions) { _, isPresented in
+                guard !isPresented else { return }
+                Task {
+                    await storeManager.updateCustomerProductStatus()
+                    await supabaseService.fetchTierConfigs()
+                    await supabaseService.fetchCurrentProfile()
+                }
+            }
             .onAppear {
                 if hpdManualURLInput.isEmpty {
                     hpdManualURLInput = defaultURLString

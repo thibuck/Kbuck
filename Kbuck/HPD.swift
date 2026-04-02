@@ -1455,7 +1455,7 @@ struct HPDView: View {
     @State private var cachedFilteredEntries: [HPDEntry] = []
     @State private var cachedFilteredCount: Int = 0
     @State private var cachedGroupedByDate: [(String, [HPDEntry])] = []
-    @State private var favoriteLocationOptions: [(title: String, address: String, count: Int)] = []
+    @State private var favoriteLocationOptions: [(title: String, address: String, count: Int, entries: [HPDEntry])] = []
     @State private var showLocationFilterSheet: Bool = false
     @State private var isUserNavigatingFromHeader: Bool = false
     @State private var showFilter: Bool = false
@@ -1477,6 +1477,7 @@ struct HPDView: View {
     @State private var selectedFavoriteLocationFilters: Set<String> = []
     @State private var isFavoriteLocationSearchVisible: Bool = false
     @State private var favoriteLocationSearchText: String = ""
+    @State private var favoriteLocationAutoCollapseToken = UUID()
     @State private var mileageVIN: String? = nil
     @State private var spvVIN: String? = nil
     @State private var spvOdo: String? = nil
@@ -1583,20 +1584,22 @@ struct HPDView: View {
         return favoriteLocationLabel(for: entry)
     }
 
-    private var filteredFavoriteLocationOptions: [(title: String, address: String, count: Int)] {
-        let query = normalizedSearchTerm(favoriteLocationSearchText)
-        guard !query.isEmpty else { return favoriteLocationOptions }
-
-        return favoriteLocationOptions.filter { option in
-            let haystack = [
-                option.title,
-                option.address,
-                String(option.count)
-            ]
-                .map(normalizedSearchTerm)
-                .joined(separator: " ")
-            return haystack.contains(query)
+    private var favoriteLocationSelectionSummary: String {
+        let selected = selectedFavoriteLocationFilters
+        if selected.isEmpty {
+            return "All saved locations"
         }
+
+        if selected.count == 1, let address = selected.first {
+            let matchingTitle = favoriteLocationOptions.first { $0.address == address }?.title ?? address
+            return matchingTitle.capitalized
+        }
+
+        return "\(selected.count) locations selected"
+    }
+
+    private var filteredFavoriteLocationOptions: [(title: String, address: String, count: Int, entries: [HPDEntry])] {
+        favoriteLocationOptions
     }
 
     private func rebuildFavoriteLocationOptions(from favoriteEntries: [HPDEntry]) {
@@ -1613,7 +1616,7 @@ struct HPDView: View {
                     }
                     return lhs.value < rhs.value
                 }?.key ?? cleanAddress
-                return (title: bestTitle, address: cleanAddress, count: entries.count)
+                return (title: bestTitle, address: cleanAddress, count: entries.count, entries: entries)
             }
             .sorted {
                 if $0.count == $1.count {
@@ -2190,17 +2193,17 @@ struct HPDView: View {
         switch segment {
         case .header:
             radii = .init(topLeading: 22, bottomLeading: 0, bottomTrailing: 0, topTrailing: 22)
-            strokeOpacity = 0.05
+            strokeOpacity = 0.07
         case .item:
             radii = .init(topLeading: 0, bottomLeading: 0, bottomTrailing: 0, topTrailing: 0)
             strokeOpacity = 0
         case .footer:
             radii = .init(topLeading: 0, bottomLeading: 22, bottomTrailing: 22, topTrailing: 0)
-            strokeOpacity = 0.05
+            strokeOpacity = 0.07
         }
 
         return UnevenRoundedRectangle(cornerRadii: radii, style: .continuous)
-            .fill(Color(uiColor: .systemBackground))
+            .fill(Color(uiColor: .secondarySystemGroupedBackground))
             .overlay(
                 UnevenRoundedRectangle(cornerRadii: radii, style: .continuous)
                     .stroke(Color.black.opacity(strokeOpacity), lineWidth: 1)
@@ -2209,26 +2212,22 @@ struct HPDView: View {
 
     @ViewBuilder
     private func favoriteVehicleRow(_ entry: HPDEntry, isFirstInLocation: Bool = false, isLastInLocation: Bool = false) -> some View {
-        VStack(spacing: 0) {
-            VehicleCardView(
-                entry: entry,
-                showAddress: false,
-                showQuickInventory: false,
-                showFavoriteButton: false,
-                isFavoritesContext: true,
-                initiallyExpanded: true
-            )
-            .padding(.horizontal, 6)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color(uiColor: .secondarySystemGroupedBackground))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.black.opacity(0.04), lineWidth: 1)
-            )
-        }
+        VehicleCardView(
+            entry: entry,
+            showAddress: false,
+            showQuickInventory: false,
+            showFavoriteButton: false,
+            isFavoritesContext: true,
+            initiallyExpanded: true
+        )
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Color(uiColor: .tertiarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.black.opacity(0.04), lineWidth: 1)
+        )
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) {
                 removeFavorite(entry)
@@ -2237,112 +2236,93 @@ struct HPDView: View {
             }
         }
         .padding(.horizontal, 10)
-        .padding(.top, isFirstInLocation ? 16 : 12)
-        .padding(.bottom, isLastInLocation ? 16 : 12)
+        .padding(.top, isFirstInLocation ? 4 : 8)
+        .padding(.bottom, isLastInLocation ? 14 : 10)
         .listRowInsets(EdgeInsets(top: 0, leading: 10, bottom: 0, trailing: 10))
         .listRowSeparator(.hidden)
-        .listRowBackground(favoriteGroupBackground(.item))
+        .listRowBackground(favoriteGroupBackground(isLastInLocation ? .footer : .item))
     }
 
     @ViewBuilder
     private func favoriteLocationHeader(
         title: String,
+        address: String,
         shortAddress: String,
         formattedTime: String?,
         totalVehicles: Int,
         sectionKey: String
     ) -> some View {
-        Button {
-            expandedLocations[sectionKey] = !(expandedLocations[sectionKey] ?? true)
-        } label: {
-            HStack(alignment: .top, spacing: 10) {
-                Image("location")
+        let isExpanded = expandedLocations[sectionKey] ?? true
+
+        HStack(spacing: 12) {
+            Button {
+                selectedAddressForMap = address
+                showMapAlert = true
+            } label: {
+                Image("applemaps")
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 24, height: 24)
+                    .frame(width: 20, height: 20)
+                    .opacity(0.9)
+            }
+            .buttonStyle(.plain)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(title.capitalized)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text(title.capitalized)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                        .allowsTightening(true)
+                        .layoutPriority(1)
 
-                        if let formattedTime {
-                            Text("•")
-                                .foregroundColor(.primary)
-                            Text(formattedTime)
-                                .font(.subheadline.bold())
-                                .foregroundColor(.primary)
-                                .lineLimit(1)
-                        }
-                    }
+                    Text("(\(totalVehicles))")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .fixedSize()
+                }
 
+                HStack(spacing: 6) {
                     Text(shortAddress.capitalized)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
+                    if let formattedTime, !formattedTime.isEmpty {
+                        Text("•")
+                        Text(formattedTime)
+                    }
                 }
-
-                Spacer(minLength: 6)
-
-                VStack(alignment: .trailing, spacing: 8) {
-                    Text("\(totalVehicles) \(totalVehicles == 1 ? "vehicle" : "vehicles")")
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.blue)
-                        .foregroundColor(.white)
-                        .font(.caption.bold())
-                        .clipShape(Capsule())
-
-                    Image(systemName: (expandedLocations[sectionKey] ?? true) ? "chevron.up" : "chevron.down")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 12)
-            .background(Color(UIColor.secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .shadow(color: Color.primary.opacity(0.08), radius: 6, x: 0, y: 3)
+            .layoutPriority(1)
+
+            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
+                .fixedSize()
         }
-        .buttonStyle(.plain)
-        .listRowInsets(EdgeInsets(top: 16, leading: 10, bottom: 0, trailing: 10))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            expandedLocations[sectionKey] = !isExpanded
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 14)
+        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .listRowInsets(EdgeInsets(top: 18, leading: 10, bottom: 0, trailing: 10))
         .listRowSeparator(.hidden)
         .listRowBackground(favoriteGroupBackground(.header))
     }
 
     @ViewBuilder
-    private func favoriteNavigateRow(address: String) -> some View {
-        VStack(spacing: 0) {
-            HStack {
-                Spacer()
-                Button {
-                    selectedAddressForMap = address
-                    showMapAlert = true
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "location.fill")
-                        Text("Navigate")
-                            .font(.subheadline.bold())
-                    }
-                    .padding(.vertical, 7)
-                    .padding(.horizontal, 18)
-                    .background(Color(uiColor: .tertiarySystemFill))
-                    .clipShape(Capsule())
-                    .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                Spacer()
-            }
-        }
-        .padding(.top, 6)
-        .listRowInsets(EdgeInsets(top: 0, leading: 10, bottom: 16, trailing: 10))
-        .listRowSeparator(.hidden)
-        .listRowBackground(favoriteGroupBackground(.footer))
+    private func favoriteLocationSpacerRow() -> some View {
+        Color.clear
+            .frame(height: 6)
+            .listRowInsets(EdgeInsets())
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
     }
 
     // Single reactive token — changes whenever any filter or sort option changes.
@@ -2490,21 +2470,35 @@ struct HPDView: View {
     // MARK: - Favorites Apple Wallet view (Location → Date → Vehicles sorted by odometer desc)
 
     @ViewBuilder private var favoritesWalletList: some View {
+        let hasAnyFavorites = entries.contains {
+            !isDateInPast($0.dateScheduled) && supabaseService.favorites.contains(normalizeVIN($0.vin))
+        }
+
         ZStack {
             Color(UIColor.systemGroupedBackground).ignoresSafeArea()
             VStack(alignment: .leading, spacing: 0) {
                 if cachedFilteredEntries.isEmpty && !isLoading {
                     ContentUnavailableView {
-                        Label("No Favorites Yet", systemImage: "star.slash")
+                        Label(hasAnyFavorites ? "No Results" : "No Favorites Yet",
+                              systemImage: hasAnyFavorites ? "magnifyingglass" : "star.slash")
                     } description: {
-                        Text("Vehicles you star will appear here.")
+                        Text(hasAnyFavorites
+                             ? "No favorite vehicles match the current search or location filter."
+                             : "Vehicles you star will appear here.")
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     List {
+                        if !favoriteLocationOptions.isEmpty {
+                            favoriteLocationFilterCard
+                                .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 8, trailing: 16))
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                        }
+
                         ForEach(groupedFavorites, id: \.date) { dateGroup in
                             Section {
-                                ForEach(dateGroup.locations, id: \.address) { locationGroup in
+                                ForEach(Array(dateGroup.locations.enumerated()), id: \.element.address) { locationIndex, locationGroup in
                                     let locationTitle = locationGroup.title
                                     let shortAddress = locationGroup.address.components(separatedBy: " Houston").first ?? locationGroup.address
                                     let totalVehicles = locationGroup.vehicles.count
@@ -2517,6 +2511,7 @@ struct HPDView: View {
 
                                     favoriteLocationHeader(
                                         title: locationTitle,
+                                        address: locationGroup.address,
                                         shortAddress: shortAddress,
                                         formattedTime: formattedTime,
                                         totalVehicles: totalVehicles,
@@ -2531,7 +2526,10 @@ struct HPDView: View {
                                                 isLastInLocation: index == locationGroup.vehicles.count - 1
                                             )
                                         }
-                                        favoriteNavigateRow(address: locationGroup.address)
+                                    }
+
+                                    if locationIndex < dateGroup.locations.count - 1 {
+                                        favoriteLocationSpacerRow()
                                     }
                                 }
                             } header: {
@@ -2573,11 +2571,11 @@ struct HPDView: View {
     private var favoriteLocationFilterCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.snappy) {
-                    isFavoriteLocationFilterExpanded.toggle()
-                    if !isFavoriteLocationFilterExpanded, favoriteLocationSearchText.isEmpty {
-                        isFavoriteLocationSearchVisible = false
-                    }
+                isFavoriteLocationFilterExpanded.toggle()
+                if isFavoriteLocationFilterExpanded {
+                    scheduleFavoriteLocationAutoCollapse()
+                } else {
+                    favoriteLocationAutoCollapseToken = UUID()
                 }
             } label: {
                 HStack(spacing: 10) {
@@ -2585,12 +2583,10 @@ struct HPDView: View {
                         .foregroundStyle(.blue)
                         .font(.title3)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Location Filter")
+                        Text("Locations")
                             .font(.headline.weight(.semibold))
                             .foregroundStyle(.primary)
-                        Text(selectedFavoriteLocationFilters.isEmpty
-                             ? "Filter favorites by location"
-                             : "\(selectedFavoriteLocationFilters.count) selected")
+                        Text(favoriteLocationSelectionSummary)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -2615,50 +2611,11 @@ struct HPDView: View {
                 Divider()
                     .padding(.top, 12)
 
-                HStack(spacing: 10) {
-                    Text(favoriteLocationSearchText.isEmpty
-                         ? "Optional search by lot name or address"
-                         : "Searching locations")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Spacer()
-
-                    Button {
-                        withAnimation(.snappy) {
-                            if isFavoriteLocationSearchVisible, favoriteLocationSearchText.isEmpty {
-                                isFavoriteLocationSearchVisible = false
-                            } else {
-                                isFavoriteLocationSearchVisible = true
-                            }
-                        }
-                    } label: {
-                        Label(
-                            isFavoriteLocationSearchVisible || !favoriteLocationSearchText.isEmpty ? "Hide Search" : "Search",
-                            systemImage: isFavoriteLocationSearchVisible || !favoriteLocationSearchText.isEmpty ? "xmark.circle" : "magnifyingglass"
-                        )
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.blue)
-                    }
-                    .buttonStyle(.plain)
-                }
+                SearchBar(
+                    text: $favoriteLocationSearchText,
+                    placeholder: "VIN, make, model or year"
+                )
                 .padding(.top, 14)
-
-                if isFavoriteLocationSearchVisible || !favoriteLocationSearchText.isEmpty {
-                    SearchBar(
-                        text: $favoriteLocationSearchText,
-                        placeholder: "Lot name or address"
-                    )
-                    .padding(.top, 12)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                }
-
-                if filteredFavoriteLocationOptions.isEmpty, !favoriteLocationSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("No matching locations for that search.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 12)
-                }
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
                     ForEach(filteredFavoriteLocationOptions, id: \.address) { option in
@@ -2683,6 +2640,17 @@ struct HPDView: View {
         .shadow(color: Color.primary.opacity(0.08), radius: 10, x: 0, y: 5)
     }
 
+    private func scheduleFavoriteLocationAutoCollapse() {
+        let token = UUID()
+        favoriteLocationAutoCollapseToken = token
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard favoriteLocationAutoCollapseToken == token, isFavoriteLocationFilterExpanded else { return }
+            isFavoriteLocationFilterExpanded = false
+        }
+    }
+
     private func favoriteLocationFilterChip(title: String, address: String, count: Int) -> some View {
         let isSelected = selectedFavoriteLocationFilters.contains(address)
 
@@ -2693,39 +2661,36 @@ struct HPDView: View {
                 selectedFavoriteLocationFilters.insert(address)
             }
         } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top, spacing: 6) {
-                    Image("location")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 18, height: 18)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.subheadline)
                     Text(title.capitalized)
-                        .font(.caption.weight(.semibold))
-                        .multilineTextAlignment(.leading)
+                        .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
-                        .minimumScaleFactor(0.8)
                     Spacer(minLength: 0)
+                    Text("\(count)")
+                        .font(.caption.bold())
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background((isSelected ? Color.white : Color.blue).opacity(isSelected ? 0.18 : 0.10))
+                        .clipShape(Capsule())
                 }
 
                 Text(address.capitalized)
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundStyle(isSelected ? .white.opacity(0.88) : .secondary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-
-                Text("\(count) vehicle\(count == 1 ? "" : "s")")
-                    .font(.caption2)
-                    .foregroundStyle(isSelected ? .white.opacity(0.88) : .secondary)
+                    .lineLimit(1)
             }
             .foregroundStyle(isSelected ? .white : .primary)
-            .frame(maxWidth: .infinity, minHeight: 84, alignment: .topLeading)
-            .padding(12)
+            .frame(maxWidth: .infinity, minHeight: 70, alignment: .topLeading)
+            .padding(14)
             .background(isSelected ? Color.blue : Color(uiColor: .secondarySystemGroupedBackground))
             .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(isSelected ? Color.blue : Color.primary.opacity(0.08), lineWidth: 1)
             }
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
     }
@@ -2781,18 +2746,7 @@ struct HPDView: View {
         VStack(spacing: 0) {
             // 1. Fixed header inside mainContent
             VStack(spacing: 10) {
-                if favoritesOnly {
-                    SearchBar(
-                        text: $searchText,
-                        placeholder: "Search in favorites..."
-                    )
-                    .padding(.horizontal, 16)
-
-                    if !favoriteLocationOptions.isEmpty {
-                        favoriteLocationFilterCard
-                            .padding(.horizontal, 16)
-                    }
-                } else {
+                if !favoritesOnly {
                     HStack(spacing: 12) {
                         SearchBar(
                             text: $searchText,
@@ -2873,12 +2827,19 @@ struct HPDView: View {
             recomputeFilteredEntries()
         }
         .onChange(of: selectedFavoriteLocationFilters) { _, _ in
+            if isFavoriteLocationFilterExpanded {
+                scheduleFavoriteLocationAutoCollapse()
+            }
             recomputeFilteredEntries()
         }
         .onChange(of: favoriteLocationSearchText) { _, _ in
+            if isFavoriteLocationFilterExpanded {
+                scheduleFavoriteLocationAutoCollapse()
+            }
             if favoriteLocationSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 isFavoriteLocationSearchVisible = false
             }
+            recomputeFilteredEntries()
         }
         .onChange(of: supabaseService.favorites) { _, _ in
             recomputeFilteredEntries()
@@ -3306,6 +3267,14 @@ struct HPDView: View {
             if !selectedFavoriteLocationFilters.isEmpty {
                 favs = favs.filter { entry in
                     selectedFavoriteLocationFilters.contains(favoriteLocationLabel(for: entry))
+                }
+            }
+
+            let favoriteLocationQuery = favoriteLocationSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !favoriteLocationQuery.isEmpty {
+                favs = favs.filter { entry in
+                    let odoInfo = supabaseService.odoByVIN[entry.vin] ?? supabaseService.odoByVIN[normalizeVIN(entry.vin)]
+                    return vehicleMatchesSearch(favoriteLocationQuery, entry: entry, odoInfo: odoInfo)
                 }
             }
 
