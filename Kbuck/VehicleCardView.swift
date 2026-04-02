@@ -99,6 +99,17 @@ struct VehicleCardView: View {
     private var cardKey: String   { normalizeVIN(entry.vin) }
     private var isFav:   Bool     { supabaseService.favorites.contains(cardKey) }
     private var odoInfo: OdoInfo? { supabaseService.odoByVIN[entry.vin] ?? supabaseService.odoByVIN[cardKey] }
+    private var decodedMake: String? {
+        supabaseService.decodedMakeByVIN[entry.vin] ?? supabaseService.decodedMakeByVIN[cardKey]
+    }
+    private var decodedModel: String? {
+        supabaseService.decodedModelByVIN[entry.vin] ?? supabaseService.decodedModelByVIN[cardKey]
+    }
+    private var engineInfo: String? {
+        supabaseService.engineByVIN[entry.vin] ?? supabaseService.engineByVIN[cardKey]
+    }
+    private var displayMake: String { decodedMake ?? brandDisplayName(for: entry.make) }
+    private var displayModel: String { decodedModel ?? odoInfo?.realModel?.capitalized ?? entry.model }
     private var yearStr: String   { normalizedYear(entry.year) }
     private var processed: Bool   { lastProcessedVIN == cardKey }
     private var currentServerDailyLimit: Int {
@@ -118,7 +129,7 @@ struct VehicleCardView: View {
     }
 
     private var shareText: String {
-        var parts = ["\(yearStr) \(brandDisplayName(for: entry.make)) \(entry.model)", "VIN: \(entry.vin)"]
+        var parts = ["\(yearStr) \(displayMake) \(displayModel)", "VIN: \(entry.vin)"]
         if let odo = odoInfo {
             parts.append("Miles: \(odo.odometer.formatWithCommas())")
             let price = odo.privateValue.formatAsCurrency()
@@ -128,7 +139,7 @@ struct VehicleCardView: View {
     }
 
     private var calendarEntryLabel: String {
-        "\(yearStr) \(entry.make) \(entry.model) - \(entry.dateScheduled)"
+        "\(yearStr) \(displayMake) \(displayModel) - \(entry.dateScheduled)"
     }
 
     private func nextUpgradeOffer() -> (name: String, limit: String)? {
@@ -201,14 +212,14 @@ struct VehicleCardView: View {
         VStack(alignment: .leading, spacing: 8) {
             // ── Header (always visible) — tap to expand/collapse ──────────
             HStack(alignment: .center, spacing: 8) {
-                if let asset = brandAssetName(for: entry.make) {
+                if let asset = brandAssetName(for: displayMake) {
                     Image(asset)
                         .resizable()
                         .scaledToFit()
                         .frame(width: 20, height: 20)
                 }
 
-                Text("\(yearStr) \(brandDisplayName(for: entry.make)) \(odoInfo?.realModel?.capitalized ?? entry.model)".uppercased())
+                Text("\(yearStr) \(displayMake) \(displayModel)".uppercased())
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
@@ -347,6 +358,9 @@ struct VehicleCardView: View {
                                 title: "Price",
                                 value: odo.privateValue.formatAsCurrency()
                             )
+                            if let engine = engineInfo {
+                                favoriteMetricCard(title: "Engine", value: engine)
+                            }
                         }
 
                         if let transientFavoriteDetail {
@@ -402,6 +416,19 @@ struct VehicleCardView: View {
                                 .minimumScaleFactor(0.9)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
+                    }
+                }
+
+                if let engine = engineInfo, !isFavoritesContext {
+                    HStack(spacing: 6) {
+                        Image(systemName: "bolt.circle.fill")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Text(engine)
+                            .font(.footnote)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.9)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
 
@@ -530,6 +557,9 @@ struct VehicleCardView: View {
                 .stroke(processed ? Color.blue.opacity(0.4) : Color.clear, lineWidth: 1)
         )
         .shadow(color: .black.opacity(isFavoritesContext ? 0 : 0.06), radius: isFavoritesContext ? 0 : 8, x: 0, y: 3)
+        .task(id: cardKey) {
+            await supabaseService.loadNHTSACacheForVIN(cardKey)
+        }
 
         // MARK: - Modifiers: Alerts & Sheets
 
@@ -890,7 +920,7 @@ struct VehicleCardView: View {
             return realModel
         }
 
-        return normalizedModelName(for: entry.model, make: entry.make)
+        return decodedModel ?? normalizedModelName(for: entry.model, make: entry.make)
     }
 
     /// Mirrors HPDView.sanitizedAddressForMaps(_:) exactly.

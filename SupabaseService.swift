@@ -148,10 +148,14 @@ struct QuickDataCacheRow: Codable {
     // Published state — HPDView observes these directly
     @Published private(set) var favorites: Set<String> = []
     @Published private(set) var odoByVIN: [String: OdoInfo] = [:]
+    @Published private(set) var decodedMakeByVIN: [String: String] = [:]
+    @Published private(set) var decodedModelByVIN: [String: String] = [:]
+    @Published private(set) var engineByVIN: [String: String] = [:]
     @Published private(set) var currentProfile: UserUsageProfile? = nil
     @Published private(set) var currentTier: String? = nil
     @Published private(set) var tierConfigs: [String: TierConfig] = [:]
     @Published private(set) var isCarfaxEnabled: Bool = true
+    private var nhtsaCacheObserver: NSObjectProtocol?
 
     // UserDefaults keys (same as the old @AppStorage keys so data migrates automatically)
     private let favKey  = "hpdFavorites"
@@ -217,6 +221,22 @@ struct QuickDataCacheRow: Codable {
         // Fetch tier config immediately — non-blocking, drives dynamic UI limits
         Task { await fetchTierConfigs() }
         Task { await fetchAppSettings() }
+        nhtsaCacheObserver = NotificationCenter.default.addObserver(
+            forName: .nhtsaCacheDidUpdate,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let update = notification.object as? NHTSACacheUpdate else { return }
+            Task { @MainActor [weak self] in
+                self?.applyNHTSACacheUpdate(update)
+            }
+        }
+    }
+
+    deinit {
+        if let nhtsaCacheObserver {
+            NotificationCenter.default.removeObserver(nhtsaCacheObserver)
+        }
     }
 
     // MARK: - Local state mutations (called directly by HPDView for instant UI updates)
@@ -241,6 +261,39 @@ struct QuickDataCacheRow: Codable {
     func clearOdoCache() {
         odoByVIN = [:]
         persistOdo()
+    }
+
+    func applyNHTSACacheUpdate(_ update: NHTSACacheUpdate) {
+        let vin = normalizeVIN(update.vin)
+        guard !vin.isEmpty else { return }
+
+        if let make = update.make?.trimmingCharacters(in: .whitespacesAndNewlines), !make.isEmpty {
+            decodedMakeByVIN[vin] = make
+        }
+
+        if let model = update.model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
+            decodedModelByVIN[vin] = model
+        }
+
+        // Engine: "2.0L V4", "3.5L V6", etc.
+        let dispStr: String? = {
+            guard let d = update.engine_displacement_l?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !d.isEmpty, let num = Double(d) else { return nil }
+            return String(format: "%.1fL", num)
+        }()
+        let cylStr: String? = {
+            guard let c = update.engine_cylinders?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !c.isEmpty, let num = Int(c), num > 0 else { return nil }
+            return "V\(num)"
+        }()
+        let engineStr: String?
+        switch (dispStr, cylStr) {
+        case let (d?, c?): engineStr = "\(d) \(c)"
+        case let (d?, nil): engineStr = d
+        case let (nil, c?): engineStr = c
+        default: engineStr = nil
+        }
+        if let e = engineStr { engineByVIN[vin] = e }
     }
 
     /// Strictly local browser/network cache wipe.
@@ -278,6 +331,9 @@ struct QuickDataCacheRow: Codable {
     func clearAllLocalState() {
         favorites.removeAll()
         odoByVIN.removeAll()
+        decodedMakeByVIN.removeAll()
+        decodedModelByVIN.removeAll()
+        engineByVIN.removeAll()
         currentProfile = nil
         currentTier = nil
         persistFavorites()   // write empty state to UserDefaults immediately
@@ -695,5 +751,39 @@ struct QuickDataCacheRow: Codable {
 
     func resetUserLimits(userId: UUID) async {
         _ = try? await supabase.rpc("reset_user_limits", params: ["target_user_id": userId.uuidString]).execute()
+    }
+
+    // MARK: - NHTSA Cache: on-demand loader from global_vin_cache_kbuck
+
+    /// Loads decoded vehicle data (make, model, engine) for a single VIN from
+    /// global_vin_cache_kbuck (populated by the server-side hpd-pipeline Edge Function).
+    /// Skips the network call only if BOTH make AND model are already in memory.
+    func loadNHTSACacheForVIN(_ vin: String) async {
+        let cleanVIN = normalizeVIN(vin)
+        guard !cleanVIN.isEmpty else { return }
+
+        // Only skip if we already have both make and model — engine alone is not enough.
+        if decodedMakeByVIN[cleanVIN] != nil && decodedModelByVIN[cleanVIN] != nil { return }
+
+        do {
+            let rows: [NHTSACacheUpdate] = try await supabase
+                .from("global_vin_cache_kbuck")
+                .select()
+                .eq("vin", value: cleanVIN)
+                .limit(1)
+                .execute()
+                .value
+            if let row = rows.first {
+                let make  = row.make?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let model = row.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let year  = row.year
+                print("✅ [SupabaseCache] VIN \(cleanVIN) → \(make ?? "?") \(model ?? "?") \(year ?? 0)")
+                applyNHTSACacheUpdate(row)
+            } else {
+                print("⚠️ [SupabaseCache] No cache row found for VIN \(cleanVIN)")
+            }
+        } catch {
+            print("🔴 NHTSA CACHE: loadNHTSACacheForVIN failed for \(cleanVIN): \(error)")
+        }
     }
 }

@@ -15,6 +15,9 @@ struct FilteredAuctionListView: View {
     let initialSearchText: String
 
     @AppStorage("hpdCachedEntries") private var hpdCachedEntriesData: Data = Data()
+    @AppStorage("nhtsaDecodedCount") private var decodedCount: Int = 0
+    @AppStorage("nhtsaTotalToDecode") private var totalToDecode: Int = 0
+    @AppStorage("nhtsaIsDecoding") private var isDecoding: Bool = false
     @EnvironmentObject private var supabaseService: SupabaseService
     @EnvironmentObject private var storeManager:   StoreManager
 
@@ -98,6 +101,23 @@ struct FilteredAuctionListView: View {
                 }
             } else {
                 List {
+                    if isDecoding {
+                        Section {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ProgressView(
+                                    value: Double(decodedCount),
+                                    total: Double(max(totalToDecode, 1))
+                                )
+                                Text("Decoding VINs: \(decodedCount)/\(totalToDecode)")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 6)
+                        }
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                    }
+
                     ForEach(displayedVehicles) { entry in
                         VehicleCardView(entry: entry, showAddress: false, showQuickInventory: false, initiallyExpanded: true)
                             .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))

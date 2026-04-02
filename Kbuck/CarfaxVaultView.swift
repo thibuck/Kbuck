@@ -4,6 +4,7 @@ import SwiftUI
 
 struct CarfaxVaultView: View {
     @StateObject private var carfaxVault = CarfaxVault.shared
+    @EnvironmentObject private var supabaseService: SupabaseService
     @State private var invalidReportMessage: String?
     @State private var selectedReportURL: URL?
 
@@ -30,7 +31,7 @@ struct CarfaxVaultView: View {
                         } label: {
                             HStack(spacing: 12) {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text("\(report.year) \(brandDisplayName(for: report.make)) \(report.model)")
+                                    Text(displayTitle(for: report))
                                         .font(.headline)
                                         .foregroundStyle(.primary)
 
@@ -69,7 +70,14 @@ struct CarfaxVaultView: View {
                 }
             }
             .navigationTitle("My Reports")
-            .onAppear { carfaxVault.reloadCatalog() }
+            .onAppear {
+                carfaxVault.reloadCatalog()
+                Task {
+                    for report in carfaxVault.savedReports {
+                        await supabaseService.loadNHTSACacheForVIN(report.vin)
+                    }
+                }
+            }
             .alert(
                 "Report Unavailable",
                 isPresented: Binding(
@@ -105,6 +113,16 @@ struct CarfaxVaultView: View {
     }
 
     // MARK: - Helpers
+
+    /// Returns the best available vehicle title, preferring Supabase-decoded
+    /// make/model over the original HPD data stored in the report.
+    private func displayTitle(for report: SavedReport) -> String {
+        let make  = supabaseService.decodedMakeByVIN[report.vin]
+                    ?? brandDisplayName(for: report.make)
+        let model = supabaseService.decodedModelByVIN[report.vin]
+                    ?? report.model
+        return "\(report.year) \(make) \(model)"
+    }
 
     private func cheapVHRURL(for report: SavedReport) -> URL? {
         carfaxVault.cheapVHRURL(for: report)

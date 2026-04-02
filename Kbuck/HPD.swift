@@ -3721,6 +3721,15 @@ struct HPDView: View {
                             self.hpdHadLastError = false
                             self.isLoading = false
                         }
+                        // [NHTSA-LOCAL DISABLED] Vehicle names now come from global_vin_cache_kbuck
+                        // via the server-side hpd-pipeline Edge Function. No client-side NHTSA calls needed.
+                        // let scrapedVehicles = validEntries.map { entry in
+                        //     NHTSAScrapedVehicle(vin: entry.vin)
+                        // }
+                        // Task(priority: .background) {
+                        //     let pipeline = NHTSADecoderPipeline()
+                        //     await pipeline.decodeAndCache(scrapedVehicles)
+                        // }
                         return
                     } else {
                         if attempt == 1 {

@@ -2,6 +2,16 @@ import SwiftUI
 import Supabase
 import StoreKit
 
+// MARK: - HPD Pipeline Response
+
+struct HPDPipelineResponse: Decodable {
+    let total: Int?
+    let skipped: Int?
+    let processed: Int?
+    let succeeded: Int?
+    let failed: Int?
+}
+
 struct AdminUserStatus: Codable, Identifiable {
     let id: UUID
     let email: String?
@@ -758,6 +768,8 @@ struct HPDSettingsView: View {
     @State private var pendingCarfaxEnabledState: Bool?
     @State private var isUpdatingCarfaxSetting = false
     @State private var carfaxAdminErrorMessage: String?
+    @State private var isPipelineRunning = false
+    @State private var pipelineResultMessage: String? = nil
     private let defaultURLString = "https://www.houstontx.gov/police/auto_dealers_detail/Vehicles_Scheduled_For_Auction.htm"
 
     private var userEmail: String? { supabase.auth.currentUser?.email }
@@ -1090,6 +1102,82 @@ struct HPDSettingsView: View {
         }
     }
 
+    // MARK: - Admin: HPD Pipeline
+
+    @ViewBuilder
+    private var adminHPDPipelineSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 12) {
+                if isPipelineRunning {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Syncing HPD data…")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Button {
+                        Task { await triggerHPDPipeline() }
+                    } label: {
+                        Label("Refresh HPD Cache", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                }
+
+                if let msg = pipelineResultMessage {
+                    Text(msg)
+                        .font(.caption)
+                        .foregroundStyle(msg.hasPrefix("⚠️") ? Color.orange : Color.green)
+                        .transition(.opacity)
+                }
+            }
+            .padding(.vertical, 4)
+            .animation(.easeInOut, value: isPipelineRunning)
+            .animation(.easeInOut, value: pipelineResultMessage)
+        } header: {
+            Text("HPD Pipeline")
+        } footer: {
+            Text("Triggers the server-side scrape + NHTSA decode. Results are saved to global_vin_cache_kbuck.")
+        }
+    }
+
+    private func triggerHPDPipeline() async {
+        isPipelineRunning = true
+        pipelineResultMessage = nil
+
+        let urlString = "https://tnescuqegmehazuffmte.supabase.co/functions/v1/hpd-pipeline"
+        // ⚠️ Anon key only — never embed service_role in client code.
+        let anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRuZXNjdXFlZ21laGF6dWZmbXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2OTI4ODEsImV4cCI6MjA4OTI2ODg4MX0.LszstZi962himWPuoSWEXR9Xzhbl2ncewJSGzTnoeIg"
+
+        do {
+            guard let url = URL(string: urlString) else { throw URLError(.badURL) }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+            request.httpBody = "{}".data(using: .utf8)
+
+            let (data, _) = try await URLSession.shared.data(for: request)
+            let result = try JSONDecoder().decode(HPDPipelineResponse.self, from: data)
+
+            let added   = result.succeeded ?? 0
+            let failed  = result.failed    ?? 0
+
+            if added == 0 && failed == 0 {
+                pipelineResultMessage = "✅ Already up to date"
+            } else if failed == 0 {
+                pipelineResultMessage = "✅ Synced — \(added) new vehicle\(added == 1 ? "" : "s") added"
+            } else {
+                pipelineResultMessage = "✅ Synced — \(added) added, \(failed) failed"
+            }
+            print("✅ [HPD Pipeline] total=\(result.total ?? 0) skipped=\(result.skipped ?? 0) processed=\(result.processed ?? 0) succeeded=\(added) failed=\(failed)")
+        } catch {
+            pipelineResultMessage = "⚠️ Sync failed, try again"
+            print("🔴 [HPD Pipeline] trigger failed: \(error)")
+        }
+
+        isPipelineRunning = false
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -1125,6 +1213,7 @@ struct HPDSettingsView: View {
                 }
 
             if userRole == "super_admin" {
+                adminHPDPipelineSection
                 adminCarfaxSection
                 adminHPDDataSourceSection
             }

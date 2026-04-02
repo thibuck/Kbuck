@@ -240,6 +240,8 @@ func brandDisplayName(for rawMake: String) -> String {
     if m.contains("audi")    || m.hasPrefix("audi") { return "Audi" }
     if m.contains("mercuri")    || m.hasPrefix("merc") { return "Mercuri" }
     if m.contains("saturn")    || m.hasPrefix("satu") { return "Saturn" }
+    if m.contains("lincoln")    || m.hasPrefix("linc") { return "Lincoln" }
+
 
     return rawMake.capitalized
 }
@@ -280,6 +282,8 @@ func brandAssetName(for rawMake: String) -> String? {
     if m.contains("audi")    || m.hasPrefix("audi") { return "audi" }
     if m.contains("mercuri")    || m.hasPrefix("merc") { return "merc" }
     if m.contains("saturn")    || m.hasPrefix("satu") { return "satu" }
+    if m.contains("lincoln")    || m.hasPrefix("linc") { return "linc" }
+
 
     return nil
 }

@@ -72,6 +72,9 @@ struct ContentView: View {
     @AppStorage("hpdHadLastError")        private var hpdHadLastError: Bool = false
     @AppStorage("hpdManualURLEnabled")    private var manualURLModeEnabled: Bool = false
     @AppStorage("hpdManualURLInput")      private var hpdManualURLInput: String = ""
+    @AppStorage("nhtsaDecodedCount")      private var storedDecodedCount: Int = 0
+    @AppStorage("nhtsaTotalToDecode")     private var storedTotalToDecode: Int = 0
+    @AppStorage("nhtsaIsDecoding")        private var storedIsDecoding: Bool = false
 
     // Persisted role — written here on sign-in, read everywhere else.
     // Defaults to "user" so no privileged UI is ever shown before the fetch resolves.
@@ -174,6 +177,14 @@ struct ContentView: View {
                 hpdRefreshTrigger += 1
             }
         }
+        // Pull-to-refresh (and any other hpdRefreshTrigger increment) must also
+        // force-refresh hpdCachedEntriesData so HomeSummaryView sees new data.
+        .onChange(of: hpdRefreshTrigger) { _, _ in
+            guard isAuthenticated else { return }
+            Task {
+                await preloadHPDAuctionDataIfNeeded(force: true)
+            }
+        }
         .sheet(isPresented: $showInitialPaywall) {
             PaywallView()
         }
@@ -271,13 +282,52 @@ struct ContentView: View {
                 return
             }
 
+            // [NHTSA-LOCAL DISABLED] Vehicle names now come from global_vin_cache_kbuck
+            // via the server-side hpd-pipeline Edge Function. No client-side NHTSA calls needed.
+            // let scrapedVehicles = validEntries.map { entry in
+            //     NHTSAScrapedVehicle(vin: entry.vin)
+            // }
+
             hpdCachedEntriesData = encoded
             hpdCachedURL = sourceURLString
             hpdLastFetchTS = Date().timeIntervalSince1970
             lastHPDSyncDate = Date().timeIntervalSince1970
             hpdHadLastError = false
+
+            // Task(priority: .background) {
+            //     let pipeline = NHTSADecoderPipeline()
+            //     await MainActor.run {
+            //         beginDecodingProgress(total: scrapedVehicles.count)
+            //     }
+            //     await pipeline.decodeAndCache(scrapedVehicles) { current, total in
+            //         self.updateDecodingProgress(current: current, total: total)
+            //     }
+            //     await MainActor.run {
+            //         finishDecodingProgress()
+            //     }
+            // }
         } catch {
             print("🔴 HPD preload failed: \(error.localizedDescription)")
         }
+    }
+
+    @MainActor
+    private func beginDecodingProgress(total: Int) {
+        storedDecodedCount = 0
+        storedTotalToDecode = total
+        storedIsDecoding = total > 0
+    }
+
+    @MainActor
+    private func updateDecodingProgress(current: Int, total: Int) {
+        storedDecodedCount = current
+        storedTotalToDecode = total
+        storedIsDecoding = total > 0 && current < total
+    }
+
+    @MainActor
+    private func finishDecodingProgress() {
+        storedDecodedCount = storedTotalToDecode
+        storedIsDecoding = false
     }
 }
