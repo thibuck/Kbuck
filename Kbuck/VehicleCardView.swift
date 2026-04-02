@@ -65,6 +65,7 @@ struct VehicleCardView: View {
     // Web / stat.vin
     @State private var showWebAlert = false
     @State private var statVinURL: URL? = nil
+    @State private var carfaxReportURL: URL? = nil
 
     // Calendar completion
     @State private var isAddedToCalendar = false
@@ -124,6 +125,10 @@ struct VehicleCardView: View {
             if price != "N/A" { parts.append("Value: \(price)") }
         }
         return parts.joined(separator: "\n")
+    }
+
+    private var calendarEntryLabel: String {
+        "\(yearStr) \(entry.make) \(entry.model) - \(entry.dateScheduled)"
     }
 
     private func nextUpgradeOffer() -> (name: String, limit: String)? {
@@ -474,7 +479,7 @@ struct VehicleCardView: View {
                         Button {
                             haptic(.light)
                             pendingCalendarEntry = entry
-                            pendingCalendarLabel = "\(yearStr) \(entry.make) \(entry.model) — \(entry.dateScheduled)"
+                            pendingCalendarLabel = calendarEntryLabel
                             showCalendarConfirm  = true
                         } label: {
                             Image(systemName: "calendar.badge.plus")
@@ -609,6 +614,24 @@ struct VehicleCardView: View {
             if let url = statVinURL { SafariView(url: url).ignoresSafeArea() }
         }
 
+        .sheet(isPresented: Binding(get: { carfaxReportURL != nil }, set: { if !$0 { carfaxReportURL = nil } })) {
+            if let url = carfaxReportURL {
+                NavigationStack {
+                    SafariControllerView(url: url)
+                        .ignoresSafeArea()
+                        .toolbar {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button {
+                                    UIApplication.shared.open(url)
+                                } label: {
+                                    Image(systemName: "safari")
+                                }
+                            }
+                        }
+                }
+            }
+        }
+
         .alert("Data Information", isPresented: $showQuickDataInfo) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -713,7 +736,7 @@ struct VehicleCardView: View {
 
     private func openReport(for vin: String) {
         guard let url = carfaxVault.getReportURL(for: vin) else { return }
-        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+        carfaxReportURL = url
     }
 
     private func fetchCarfaxReport() async {
@@ -766,7 +789,7 @@ struct VehicleCardView: View {
                 cheapvhrReportID: cheapvhrReportID
             )
             if let url = carfaxVault.getReportURL(for: vin) {
-                UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                carfaxReportURL = url
             }
         } catch {
             presentCarfaxError(error.localizedDescription)

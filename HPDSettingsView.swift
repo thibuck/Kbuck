@@ -754,6 +754,8 @@ struct HPDSettingsView: View {
     @State private var showManageSubscriptions   = false
     @State private var isLoadingProfile: Bool    = false
     @State private var adminCarfaxEnabled = true
+    @State private var showCarfaxAdminConfirmation = false
+    @State private var pendingCarfaxEnabledState: Bool?
     @State private var isUpdatingCarfaxSetting = false
     @State private var carfaxAdminErrorMessage: String?
     private let defaultURLString = "https://www.houstontx.gov/police/auto_dealers_detail/Vehicles_Scheduled_For_Auction.htm"
@@ -895,12 +897,10 @@ struct HPDSettingsView: View {
         Binding(
             get: { adminCarfaxEnabled },
             set: { newValue in
-                let previousValue = adminCarfaxEnabled
-                adminCarfaxEnabled = newValue
-                isUpdatingCarfaxSetting = true
-                Task {
-                    await updateCarfaxAdminToggle(to: newValue, previousValue: previousValue)
-                }
+                guard !isUpdatingCarfaxSetting else { return }
+                pendingCarfaxEnabledState = newValue
+                adminCarfaxEnabled = supabaseService.isCarfaxEnabled
+                showCarfaxAdminConfirmation = true
             }
         )
     }
@@ -919,6 +919,17 @@ struct HPDSettingsView: View {
                 carfaxAdminErrorMessage = "Secure update failed. Create the Supabase RPC `set_carfax_enabled(boolean)` for super admins only."
             }
         }
+    }
+
+    private var carfaxAdminConfirmationTitle: String {
+        (pendingCarfaxEnabledState ?? false) ? "Enable Carfax Globally" : "Disable Carfax Globally"
+    }
+
+    private var carfaxAdminConfirmationMessage: String {
+        if pendingCarfaxEnabledState ?? false {
+            return "This will allow new Carfax purchases and new Carfax fetches across the app again. Previously purchased reports will remain accessible. Are you sure you want to continue?"
+        }
+        return "This will disable new Carfax purchases and new Carfax fetches across the app for all users. Previously purchased reports will remain accessible. Are you sure you want to continue?"
     }
 
     @ViewBuilder
@@ -1208,10 +1219,27 @@ struct HPDSettingsView: View {
                         Task { await supabaseService.fetchCurrentProfile() }
                     }
             }
-            .manageSubscriptionsSheet(isPresented: $showManageSubscriptions)
-            .alert("Carfax Admin Error", isPresented: Binding(
-                get: { carfaxAdminErrorMessage != nil },
-                set: { if !$0 { carfaxAdminErrorMessage = nil } }
+        .manageSubscriptionsSheet(isPresented: $showManageSubscriptions)
+        .alert(carfaxAdminConfirmationTitle, isPresented: $showCarfaxAdminConfirmation) {
+            Button("Cancel", role: .cancel) {
+                pendingCarfaxEnabledState = nil
+                adminCarfaxEnabled = supabaseService.isCarfaxEnabled
+            }
+            Button((pendingCarfaxEnabledState ?? false) ? "Enable" : "Disable", role: (pendingCarfaxEnabledState ?? false) ? nil : .destructive) {
+                guard let requestedValue = pendingCarfaxEnabledState else { return }
+                let previousValue = supabaseService.isCarfaxEnabled
+                isUpdatingCarfaxSetting = true
+                pendingCarfaxEnabledState = nil
+                Task {
+                    await updateCarfaxAdminToggle(to: requestedValue, previousValue: previousValue)
+                }
+            }
+        } message: {
+            Text(carfaxAdminConfirmationMessage)
+        }
+        .alert("Carfax Admin Error", isPresented: Binding(
+            get: { carfaxAdminErrorMessage != nil },
+            set: { if !$0 { carfaxAdminErrorMessage = nil } }
             )) {
                 Button("OK", role: .cancel) {}
             } message: {

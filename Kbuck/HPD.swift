@@ -29,7 +29,7 @@ struct SafariView: View {
     }
 }
 
-private struct SafariControllerView: UIViewControllerRepresentable {
+struct SafariControllerView: UIViewControllerRepresentable {
     let url: URL
 
     func makeUIViewController(context: Context) -> SFSafariViewController {

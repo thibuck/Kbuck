@@ -5,6 +5,7 @@ import SwiftUI
 struct CarfaxVaultView: View {
     @StateObject private var carfaxVault = CarfaxVault.shared
     @State private var invalidReportMessage: String?
+    @State private var selectedReportURL: URL?
 
     private let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -44,13 +45,20 @@ struct CarfaxVaultView: View {
 
                                 Spacer()
 
-                                Image(systemName: "arrow.up.right.square")
-                            .foregroundStyle(.blue)
+                                Image(systemName: "safari.fill")
+                                    .foregroundStyle(.blue)
                             }
                         }
                         .buttonStyle(.plain)
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             if let url = cheapVHRURL(for: report) {
+                                Button {
+                                    UIApplication.shared.open(url)
+                                } label: {
+                                    Label("Safari", systemImage: "safari")
+                                }
+                                .tint(.orange)
+
                                 ShareLink(item: url) {
                                     Label("Share", systemImage: "square.and.arrow.up")
                                 }
@@ -73,6 +81,26 @@ struct CarfaxVaultView: View {
             } message: {
                 Text(invalidReportMessage ?? "")
             }
+            .sheet(isPresented: Binding(
+                get: { selectedReportURL != nil },
+                set: { if !$0 { selectedReportURL = nil } }
+            )) {
+                if let url = selectedReportURL {
+                    NavigationStack {
+                        SafariControllerView(url: url)
+                            .ignoresSafeArea()
+                            .toolbar {
+                                ToolbarItem(placement: .topBarTrailing) {
+                                    Button {
+                                        UIApplication.shared.open(url)
+                                    } label: {
+                                        Image(systemName: "safari")
+                                    }
+                                }
+                            }
+                    }
+                }
+            }
         }
     }
 
@@ -87,6 +115,6 @@ struct CarfaxVaultView: View {
             invalidReportMessage = "Could not construct a valid report URL for VIN \(report.vin)."
             return
         }
-        UIApplication.shared.open(url)
+        selectedReportURL = url
     }
 }
