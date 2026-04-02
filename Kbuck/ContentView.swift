@@ -123,6 +123,7 @@ struct ContentView: View {
                     isAuthenticated = session != nil
                     isAuthReady     = true
                     if session != nil {
+                        await supabaseService.fetchAppSettings()
                         await supabaseService.fetchCurrentProfile()
                         await supabaseService.syncCurrentUserAppVersion()
                         if !didBootstrapFavorites {
@@ -139,6 +140,7 @@ struct ContentView: View {
                     }
                 case .signedIn:
                     isAuthenticated = true
+                    await supabaseService.fetchAppSettings()
                     await supabaseService.fetchCurrentProfile()
                     await supabaseService.syncCurrentUserAppVersion()
                     if !didBootstrapFavorites {
@@ -166,6 +168,7 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active, isAuthenticated else { return }
             Task {
+                await supabaseService.fetchAppSettings()
                 runGlobalLifecycleSync()
                 await preloadHPDAuctionDataIfNeeded()
                 hpdRefreshTrigger += 1
@@ -173,6 +176,11 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showInitialPaywall) {
             PaywallView()
+        }
+        .onChange(of: supabaseService.isCarfaxEnabled) { _, isEnabled in
+            if !isEnabled, selectedTab == 3 {
+                selectedTab = 0
+            }
         }
         .hideKeyboardOnTap()
     }

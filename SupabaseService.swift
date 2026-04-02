@@ -37,6 +37,10 @@ struct TierConfig: Codable {
     let max_favorites: Int
 }
 
+struct AppSettingsRow: Codable {
+    let carfax_enabled: Bool?
+}
+
 // MARK: - Rate Limit Response
 
 struct RateLimitResponse: Codable {
@@ -147,10 +151,12 @@ struct QuickDataCacheRow: Codable {
     @Published private(set) var currentProfile: UserUsageProfile? = nil
     @Published private(set) var currentTier: String? = nil
     @Published private(set) var tierConfigs: [String: TierConfig] = [:]
+    @Published private(set) var isCarfaxEnabled: Bool = true
 
     // UserDefaults keys (same as the old @AppStorage keys so data migrates automatically)
     private let favKey  = "hpdFavorites"
     private let odoKey  = "hpdOdoCache"
+    private let carfaxEnabledKey = "appSettingsCarfaxEnabled"
 
     /// Synchronous shortcut — currentUser is backed by in-memory session, zero network cost.
     private var currentUserID: UUID? { supabase.auth.currentUser?.id }
@@ -195,6 +201,7 @@ struct QuickDataCacheRow: Codable {
     // MARK: - Init
 
     init() {
+        isCarfaxEnabled = UserDefaults.standard.object(forKey: carfaxEnabledKey) as? Bool ?? true
         // Load persisted state on first launch
         if let data = UserDefaults.standard.data(forKey: favKey),
            let decoded = try? JSONDecoder().decode(Set<String>.self, from: data) {
@@ -209,6 +216,7 @@ struct QuickDataCacheRow: Codable {
         }
         // Fetch tier config immediately — non-blocking, drives dynamic UI limits
         Task { await fetchTierConfigs() }
+        Task { await fetchAppSettings() }
     }
 
     // MARK: - Local state mutations (called directly by HPDView for instant UI updates)
@@ -592,6 +600,32 @@ struct QuickDataCacheRow: Codable {
         } catch {
             print("🔴 fetchTierConfigs failed: \(error)")
         }
+    }
+
+    func fetchAppSettings() async {
+        do {
+            let row: AppSettingsRow = try await supabase
+                .from("app_settings_kbuck")
+                .select("carfax_enabled")
+                .eq("id", value: 1)
+                .single()
+                .execute()
+                .value
+
+            let isEnabled = row.carfax_enabled ?? true
+            isCarfaxEnabled = isEnabled
+            UserDefaults.standard.set(isEnabled, forKey: carfaxEnabledKey)
+            print("✅ APP SETTINGS: Carfax enabled = \(isEnabled)")
+        } catch {
+            print("🔴 fetchAppSettings failed: \(error)")
+        }
+    }
+
+    func setCarfaxEnabled(_ isEnabled: Bool) async throws {
+        try await supabase
+            .rpc("set_carfax_enabled", params: ["new_value": isEnabled ? "true" : "false"])
+            .execute()
+        await fetchAppSettings()
     }
 
     // MARK: - User Usage Profile

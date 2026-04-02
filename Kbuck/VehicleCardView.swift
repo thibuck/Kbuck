@@ -109,6 +109,12 @@ struct VehicleCardView: View {
     private var hasStatVinAccess: Bool {
         supabaseService.hasServerPaidPlan
     }
+    private var isCarfaxEnabled: Bool {
+        supabaseService.isCarfaxEnabled
+    }
+    private var hasSavedCarfaxReport: Bool {
+        carfaxVault.getReportURL(for: entry.vin) != nil
+    }
 
     private var shareText: String {
         var parts = ["\(yearStr) \(brandDisplayName(for: entry.make)) \(entry.model)", "VIN: \(entry.vin)"]
@@ -294,26 +300,28 @@ struct VehicleCardView: View {
                     }
                 }
                 .overlay(alignment: .trailing) {
-                    Button {
-                        if carfaxVault.getReportURL(for: entry.vin) != nil {
-                            openReport(for: entry.vin)
-                        } else if storeManager.carfaxCredits > 0 {
-                            Task { await fetchCarfaxReport() }
-                        } else {
-                            showCarfaxUpsellDialog = true
+                    if hasSavedCarfaxReport || isCarfaxEnabled {
+                        Button {
+                            if hasSavedCarfaxReport {
+                                openReport(for: entry.vin)
+                            } else if storeManager.carfaxCredits > 0 {
+                                Task { await fetchCarfaxReport() }
+                            } else {
+                                showCarfaxUpsellDialog = true
+                            }
+                        } label: {
+                            if isFetchingCarfax {
+                                ProgressView()
+                                    .frame(width: 32, height: 32)
+                            } else {
+                                Image("carfax")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 32, height: 32)
+                            }
                         }
-                    } label: {
-                        if isFetchingCarfax {
-                            ProgressView()
-                                .frame(width: 32, height: 32)
-                        } else {
-                            Image("carfax")
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 32, height: 32)
-                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
 
                 // Odometer / inspection date / private value
@@ -494,7 +502,7 @@ struct VehicleCardView: View {
                     .buttonStyle(.bordered)
                     .frame(maxWidth: .infinity)
 
-                    if carfaxVault.getReportURL(for: entry.vin) != nil {
+                    if hasSavedCarfaxReport {
                         Button {
                             openReport(for: entry.vin)
                         } label: {
@@ -709,6 +717,7 @@ struct VehicleCardView: View {
     }
 
     private func fetchCarfaxReport() async {
+        guard isCarfaxEnabled else { return }
         let vin = normalizeVIN(entry.vin)
         guard !vin.isEmpty else { return }
         guard !isFetchingCarfax else { return }

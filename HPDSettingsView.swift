@@ -753,7 +753,9 @@ struct HPDSettingsView: View {
     @State private var showPaywall: Bool         = false
     @State private var showManageSubscriptions   = false
     @State private var isLoadingProfile: Bool    = false
-    @State private var isDataSourceExpanded: Bool = false
+    @State private var adminCarfaxEnabled = true
+    @State private var isUpdatingCarfaxSetting = false
+    @State private var carfaxAdminErrorMessage: String?
     private let defaultURLString = "https://www.houstontx.gov/police/auto_dealers_detail/Vehicles_Scheduled_For_Auction.htm"
 
     private var userEmail: String? { supabase.auth.currentUser?.email }
@@ -889,125 +891,201 @@ struct HPDSettingsView: View {
         return "Resets in \(hours) hr \(mins) min (CT)"
     }
 
+    private var carfaxAdminToggleBinding: Binding<Bool> {
+        Binding(
+            get: { adminCarfaxEnabled },
+            set: { newValue in
+                let previousValue = adminCarfaxEnabled
+                adminCarfaxEnabled = newValue
+                isUpdatingCarfaxSetting = true
+                Task {
+                    await updateCarfaxAdminToggle(to: newValue, previousValue: previousValue)
+                }
+            }
+        )
+    }
+
+    private func updateCarfaxAdminToggle(to newValue: Bool, previousValue: Bool) async {
+        do {
+            try await supabaseService.setCarfaxEnabled(newValue)
+            await MainActor.run {
+                adminCarfaxEnabled = supabaseService.isCarfaxEnabled
+                isUpdatingCarfaxSetting = false
+            }
+        } catch {
+            await MainActor.run {
+                adminCarfaxEnabled = previousValue
+                isUpdatingCarfaxSetting = false
+                carfaxAdminErrorMessage = "Secure update failed. Create the Supabase RPC `set_carfax_enabled(boolean)` for super admins only."
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var settingsHeroCard: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(colorScheme == .dark ? Color(uiColor: .tertiarySystemFill) : .white.opacity(0.16))
+                        .frame(width: 54, height: 54)
+                    if hasTierAsset {
+                        Image(currentTierKey)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 34, height: 34)
+                    } else {
+                        Image(systemName: tierIconName)
+                            .font(.title2.weight(.semibold))
+                            .foregroundStyle(heroPrimaryTextColor)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("HPD AUCTION")
+                        .font(.caption.weight(.semibold))
+                        .tracking(1.2)
+                        .foregroundStyle(heroMutedTextColor)
+                    Text("Settings")
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(heroPrimaryTextColor)
+                    Text(userEmail ?? "Account")
+                        .font(.subheadline)
+                        .foregroundStyle(heroSecondaryTextColor)
+                        .lineLimit(1)
+                    if let nextRenewalPlanLabel {
+                        Text("Next Renewal: \(nextRenewalPlanLabel)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(heroMutedTextColor)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 10) {
+                SettingsMetricChip(
+                    title: "Plan",
+                    value: isLoadingProfile && currentProfileTierDisplay == nil ? "Loading..." : settingsPlanLabel,
+                    tint: heroPrimaryTextColor,
+                    titleTint: heroMutedTextColor,
+                    backgroundTint: heroChipBackground
+                )
+
+                SettingsMetricChip(
+                    title: userRole == "super_admin" ? "Access" : "Usage",
+                    value: userRole == "super_admin" ? "Unlimited" : "\(currentCount) / \(dailyLimit)",
+                    tint: userRole == "super_admin" ? heroPrimaryTextColor : progressTint,
+                    titleTint: heroMutedTextColor,
+                    backgroundTint: heroChipBackground
+                )
+            }
+
+            Text(userRole == "super_admin" ? "Super Admin Access" : resetsInMessage(now: Date()))
+                .font(.caption.weight(.medium))
+                .foregroundStyle(heroSecondaryTextColor)
+
+            if userRole != "super_admin" {
+                HStack(spacing: 10) {
+                    if storeManager.activeSubscriptionTier != .none {
+                        Button {
+                            showManageSubscriptions = true
+                        } label: {
+                            Text("Manage")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                        }
+                        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(heroPrimaryTextColor)
+                        .background(heroSecondaryButtonBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+
+                    if storeManager.activeSubscriptionTier != .platinum {
+                        Button {
+                            showPaywall = true
+                        } label: {
+                            Text("Upgrade")
+                                .font(.subheadline.weight(.bold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(colorScheme == .dark ? .white : .black)
+                        .background(colorScheme == .dark ? tierAccent.opacity(0.8) : Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .background(
+            LinearGradient(
+                colors: heroBackgroundColors,
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.12), lineWidth: 1)
+        )
+        .listRowInsets(EdgeInsets(top: 10, leading: 14, bottom: 10, trailing: 14))
+        .listRowBackground(Color.clear)
+    }
+
+    @ViewBuilder
+    private var adminCarfaxSection: some View {
+        Section {
+            Toggle(isOn: carfaxAdminToggleBinding) {
+                Label("Enable Carfax Globally", systemImage: "car.fill")
+            }
+            .disabled(isUpdatingCarfaxSetting)
+        } header: {
+            Text("Carfax Integration")
+        } footer: {
+            Text("Disables new Carfax purchases and fetches, but preserves access to previously purchased reports.")
+        }
+    }
+
+    @ViewBuilder
+    private var adminHPDDataSourceSection: some View {
+        Section {
+            NavigationLink {
+                UserActivityDetailView()
+            } label: {
+                Label("User Activity", systemImage: "chart.bar.fill")
+            }
+            
+            NavigationLink {
+                AdvancedHPDSettingsView(
+                    defaultURLString: defaultURLString,
+                    manualURLModeEnabled: $manualURLModeEnabled,
+                    hpdManualURLInput: $hpdManualURLInput,
+                    hpdHadLastError: $hpdHadLastError,
+                    refreshTrigger: $refreshTrigger,
+                    hpdCachedURL: hpdCachedURL,
+                    showHPDWeb: $showHPDWeb
+                )
+            } label: {
+                Label("Advanced HPD Controls", systemImage: "gearshape.2")
+            }
+        } header: {
+            Text("HPD Data Source")
+        }
+    }
+
     // MARK: - Body
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    VStack(alignment: .leading, spacing: 18) {
-                        HStack(alignment: .top, spacing: 14) {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                    .fill(colorScheme == .dark ? Color(uiColor: .tertiarySystemFill) : .white.opacity(0.16))
-                                    .frame(width: 54, height: 54)
-                                if hasTierAsset {
-                                    Image(currentTierKey)
-                                        .resizable()
-                                        .scaledToFit()
-                                        .frame(width: 34, height: 34)
-                                } else {
-                                    Image(systemName: tierIconName)
-                                        .font(.title2.weight(.semibold))
-                                        .foregroundStyle(heroPrimaryTextColor)
-                                }
-                            }
-
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("HPD AUCTION")
-                                    .font(.caption.weight(.semibold))
-                                    .tracking(1.2)
-                                    .foregroundStyle(heroMutedTextColor)
-                                Text("Settings")
-                                    .font(.title2.weight(.bold))
-                                    .foregroundStyle(heroPrimaryTextColor)
-                                Text(userEmail ?? "Account")
-                                    .font(.subheadline)
-                                    .foregroundStyle(heroSecondaryTextColor)
-                                    .lineLimit(1)
-                                if let nextRenewalPlanLabel {
-                                    Text("Next Renewal: \(nextRenewalPlanLabel)")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(heroMutedTextColor)
-                                        .lineLimit(1)
-                                }
-                            }
-
-                            Spacer(minLength: 0)
-                        }
-
-                        HStack(spacing: 10) {
-                            SettingsMetricChip(
-                                title: "Plan",
-                                value: isLoadingProfile && currentProfileTierDisplay == nil ? "Loading..." : settingsPlanLabel,
-                                tint: heroPrimaryTextColor,
-                                titleTint: heroMutedTextColor,
-                                backgroundTint: heroChipBackground
-                            )
-
-                            SettingsMetricChip(
-                                title: userRole == "super_admin" ? "Access" : "Usage",
-                                value: userRole == "super_admin" ? "Unlimited" : "\(currentCount) / \(dailyLimit)",
-                                tint: userRole == "super_admin" ? heroPrimaryTextColor : progressTint,
-                                titleTint: heroMutedTextColor,
-                                backgroundTint: heroChipBackground
-                            )
-                        }
-
-                        Text(userRole == "super_admin" ? "Super Admin Access" : resetsInMessage(now: Date()))
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(heroSecondaryTextColor)
-
-                        if userRole != "super_admin" {
-                            HStack(spacing: 10) {
-                                if storeManager.activeSubscriptionTier != .none {
-                                    Button {
-                                        showManageSubscriptions = true
-                                    } label: {
-                                        Text("Manage")
-                                            .font(.subheadline.weight(.semibold))
-                                            .frame(maxWidth: .infinity)
-                                            .padding(.vertical, 12)
-                                    }
-                                    .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                    .buttonStyle(.borderless)
-                                    .foregroundStyle(heroPrimaryTextColor)
-                                    .background(heroSecondaryButtonBackground)
-                                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                }
-
-                                if storeManager.activeSubscriptionTier != .platinum {
-                                    Button {
-                                        showPaywall = true
-                                    } label: {
-                                        Text("Upgrade")
-                                            .font(.subheadline.weight(.bold))
-                                            .frame(maxWidth: .infinity)
-                                            .padding(.vertical, 12)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .foregroundStyle(colorScheme == .dark ? .white : .black)
-                                    .background(colorScheme == .dark ? tierAccent.opacity(0.8) : Color.white)
-                                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                }
-                            }
-                        }
-                    }
-                    .padding(18)
-                    .background(
-                        LinearGradient(
-                            colors: heroBackgroundColors,
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 24, style: .continuous)
-                            .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.12), lineWidth: 1)
-                    )
-                    .listRowInsets(EdgeInsets(top: 10, leading: 14, bottom: 10, trailing: 14))
-                    .listRowBackground(Color.clear)
+                    settingsHeroCard
                 }
 
                 if userRole != "super_admin" {
@@ -1035,65 +1113,10 @@ struct HPDSettingsView: View {
                     }
                 }
 
-                if userRole == "super_admin" {
-                    Section(header: Text("Admin Tools")) {
-                        NavigationLink {
-                            UserActivityDetailView()
-                        } label: {
-                            Label("User Activity", systemImage: "chart.bar.fill")
-                        }
-
-                        DisclosureGroup("Data Source Controls", isExpanded: $isDataSourceExpanded) {
-                            LabeledContent("Default URL", value: defaultURLString)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .textSelection(.enabled)
-
-                            Toggle("Enable Manual URL", isOn: $manualURLModeEnabled)
-                                .tint(.blue)
-
-                            Button {
-                                refreshTrigger += 1
-                            } label: {
-                                Label("Refresh HPD Data", systemImage: "arrow.clockwise")
-                            }
-
-                            Button {
-                                showHPDWeb = true
-                            } label: {
-                                Label("Open HPD Source", systemImage: "safari")
-                            }
-                        }
-                    }
-
-                    if manualURLModeEnabled || hpdHadLastError {
-                        Section(
-                            header: Text("Manual Source URL"),
-                            footer: Text("Use this only when the HPD page changes structure or the default link breaks.")
-                        ) {
-                            TextField("https://…", text: $hpdManualURLInput)
-                                .textInputAutocapitalization(.never)
-                                .keyboardType(.URL)
-                                .textContentType(.URL)
-                                .autocorrectionDisabled(true)
-
-                            Button {
-                                refreshTrigger += 1
-                            } label: {
-                                Label("Fetch From Custom URL", systemImage: "arrow.down.circle")
-                            }
-                            .disabled(hpdManualURLInput.trimmingCharacters(in: .whitespaces).isEmpty)
-
-                            Button {
-                                hpdManualURLInput = defaultURLString
-                                manualURLModeEnabled = false
-                                hpdHadLastError = false
-                            } label: {
-                                Label("Restore Default URL", systemImage: "arrow.uturn.backward")
-                            }
-                        }
-                    }
-                }
+            if userRole == "super_admin" {
+                adminCarfaxSection
+                adminHPDDataSourceSection
+            }
 
                 Section(header: Text("Preferences")) {
                     Toggle("Open Reports in Safari", isOn: $openWebInSafari)
@@ -1186,6 +1209,14 @@ struct HPDSettingsView: View {
                     }
             }
             .manageSubscriptionsSheet(isPresented: $showManageSubscriptions)
+            .alert("Carfax Admin Error", isPresented: Binding(
+                get: { carfaxAdminErrorMessage != nil },
+                set: { if !$0 { carfaxAdminErrorMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(carfaxAdminErrorMessage ?? "")
+            }
             .onChange(of: storeManager.purchasedSubscriptions) { _, _ in
                 if showManageSubscriptions {
                     showManageSubscriptions = false
@@ -1207,10 +1238,18 @@ struct HPDSettingsView: View {
                 if hpdManualURLInput.isEmpty {
                     hpdManualURLInput = defaultURLString
                 }
+                adminCarfaxEnabled = supabaseService.isCarfaxEnabled
+            }
+            .onChange(of: supabaseService.isCarfaxEnabled) { _, newValue in
+                adminCarfaxEnabled = newValue
             }
             .task {
                 // Refresh tier configs on every Settings open — limits reflect DB without restart
                 await supabaseService.fetchTierConfigs()
+                await supabaseService.fetchAppSettings()
+                await MainActor.run {
+                    adminCarfaxEnabled = supabaseService.isCarfaxEnabled
+                }
                 guard userRole != "super_admin" else { return }
                 isLoadingProfile = true
                 await supabaseService.fetchCurrentProfile()
@@ -1243,6 +1282,74 @@ private struct SettingsMetricChip: View {
         .padding(.vertical, 12)
         .background(backgroundTint)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+}
+
+private struct AdvancedHPDSettingsView: View {
+    let defaultURLString: String
+    @Binding var manualURLModeEnabled: Bool
+    @Binding var hpdManualURLInput: String
+    @Binding var hpdHadLastError: Bool
+    @Binding var refreshTrigger: Int
+    let hpdCachedURL: String
+    @Binding var showHPDWeb: Bool
+
+    var body: some View {
+        Form {
+            Section(header: Text("Source")) {
+                LabeledContent("Default URL", value: defaultURLString)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+
+                Toggle("Enable Manual URL", isOn: $manualURLModeEnabled)
+                    .tint(.blue)
+            }
+
+            Section(header: Text("Actions")) {
+                Button {
+                    refreshTrigger += 1
+                } label: {
+                    Label("Refresh HPD Data", systemImage: "arrow.clockwise")
+                }
+
+                Button {
+                    showHPDWeb = true
+                } label: {
+                    Label("Open HPD Source", systemImage: "safari")
+                }
+            }
+
+            if manualURLModeEnabled || hpdHadLastError {
+                Section(
+                    header: Text("Manual Source URL"),
+                    footer: Text("Use this only when the HPD page changes structure or the default link breaks.")
+                ) {
+                    TextField("https://…", text: $hpdManualURLInput)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.URL)
+                        .textContentType(.URL)
+                        .autocorrectionDisabled(true)
+
+                    Button {
+                        refreshTrigger += 1
+                    } label: {
+                        Label("Fetch From Custom URL", systemImage: "arrow.down.circle")
+                    }
+                    .disabled(hpdManualURLInput.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                    Button {
+                        hpdManualURLInput = defaultURLString
+                        manualURLModeEnabled = false
+                        hpdHadLastError = false
+                    } label: {
+                        Label("Restore Default URL", systemImage: "arrow.uturn.backward")
+                    }
+                }
+            }
+        }
+        .navigationTitle("Advanced HPD")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
