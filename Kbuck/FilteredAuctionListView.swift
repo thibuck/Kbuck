@@ -12,6 +12,7 @@ struct FilteredAuctionListView: View {
     let date:     String
     let location: String
     let brand:    String?
+    let allowedBrands: [String]?
     let initialSearchText: String
 
     @AppStorage("hpdCachedEntries") private var hpdCachedEntriesData: Data = Data()
@@ -23,10 +24,17 @@ struct FilteredAuctionListView: View {
 
     @State private var searchText: String
 
-    init(date: String, location: String, brand: String?, initialSearchText: String = "") {
+    init(
+        date: String,
+        location: String,
+        brand: String?,
+        allowedBrands: [String]? = nil,
+        initialSearchText: String = ""
+    ) {
         self.date = date
         self.location = location
         self.brand = brand
+        self.allowedBrands = allowedBrands
         self.initialSearchText = initialSearchText
         self._searchText = State(initialValue: initialSearchText)
     }
@@ -40,13 +48,23 @@ struct FilteredAuctionListView: View {
 
         let locationKey = streetKey(location)
         let brandUpper  = brand?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let allowedBrandSet = Set((allowedBrands ?? []).map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        })
         let shouldHideFavorites = searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
         return all.filter { entry in
             let sameDate     = entry.dateScheduled.trimmingCharacters(in: .whitespacesAndNewlines) == date
             let sameLocation = streetKey(entry.lotAddress) == locationKey
-            let sameBrand    = brandUpper == nil
-                || entry.make.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == brandUpper!
+            let entryMake = entry.make.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            let sameBrand: Bool
+            if let brandUpper {
+                sameBrand = entryMake == brandUpper
+            } else if !allowedBrandSet.isEmpty {
+                sameBrand = allowedBrandSet.contains(entryMake)
+            } else {
+                sameBrand = true
+            }
             let isFavorite   = supabaseService.favorites.contains(normalizeVIN(entry.vin))
             return sameDate && sameLocation && sameBrand && (!shouldHideFavorites || !isFavorite)
         }
@@ -78,7 +96,23 @@ struct FilteredAuctionListView: View {
     }
 
     private var baseTitle: String {
-        brand.map { brandDisplayName(for: $0) } ?? location
+        if let brand {
+            return brandDisplayName(for: brand)
+        }
+        if let allowedBrands, allowedBrands.count == 1, let onlyBrand = allowedBrands.first {
+            return brandDisplayName(for: onlyBrand)
+        }
+        return location
+    }
+
+    private var emptyStateBrandLabel: String {
+        if let brand {
+            return brandDisplayName(for: brand)
+        }
+        if let allowedBrands, !allowedBrands.isEmpty {
+            return allowedBrands.count == 1 ? brandDisplayName(for: allowedBrands[0]) : "selected brands"
+        }
+        return "Any"
     }
 
     // MARK: - Body
@@ -93,8 +127,7 @@ struct FilteredAuctionListView: View {
                     )
                 } description: {
                     if searchText.isEmpty {
-                        let brandLabel = brand.map { brandDisplayName(for: $0) } ?? "Any"
-                        Text("No \(brandLabel) vehicles found at this location for \(date).")
+                        Text("No \(emptyStateBrandLabel) vehicles found at this location for \(date).")
                     } else {
                         Text("No vehicles match \"\(searchText)\".")
                     }
@@ -119,7 +152,13 @@ struct FilteredAuctionListView: View {
                     }
 
                     ForEach(displayedVehicles) { entry in
-                        VehicleCardView(entry: entry, showAddress: false, showQuickInventory: false, initiallyExpanded: true)
+                        VehicleCardView(
+                            entry: entry,
+                            showAddress: false,
+                            showQuickInventory: false,
+                            shouldLoadVINCacheOnAppear: false,
+                            initiallyExpanded: true
+                        )
                             .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)

@@ -151,6 +151,10 @@ struct QuickDataCacheRow: Codable {
     @Published private(set) var decodedMakeByVIN: [String: String] = [:]
     @Published private(set) var decodedModelByVIN: [String: String] = [:]
     @Published private(set) var engineByVIN: [String: String] = [:]
+    @Published private(set) var trimByVIN: [String: String] = [:]
+    @Published private(set) var bodyClassByVIN: [String: String] = [:]
+    @Published private(set) var cityMpgByVIN: [String: String] = [:]
+    @Published private(set) var hwyMpgByVIN: [String: String] = [:]
     @Published private(set) var currentProfile: UserUsageProfile? = nil
     @Published private(set) var currentTier: String? = nil
     @Published private(set) var tierConfigs: [String: TierConfig] = [:]
@@ -294,6 +298,22 @@ struct QuickDataCacheRow: Codable {
         default: engineStr = nil
         }
         if let e = engineStr { engineByVIN[vin] = e }
+
+        if let trim = update.trim?.trimmingCharacters(in: .whitespacesAndNewlines), !trim.isEmpty {
+            trimByVIN[vin] = trim
+        }
+
+        if let bodyClass = update.body_class?.trimmingCharacters(in: .whitespacesAndNewlines), !bodyClass.isEmpty {
+            bodyClassByVIN[vin] = bodyClass
+        }
+
+        if let cityMpg = update.city_mpg?.trimmingCharacters(in: .whitespacesAndNewlines), !cityMpg.isEmpty {
+            cityMpgByVIN[vin] = cityMpg
+        }
+
+        if let hwyMpg = update.hwy_mpg?.trimmingCharacters(in: .whitespacesAndNewlines), !hwyMpg.isEmpty {
+            hwyMpgByVIN[vin] = hwyMpg
+        }
     }
 
     /// Strictly local browser/network cache wipe.
@@ -334,6 +354,10 @@ struct QuickDataCacheRow: Codable {
         decodedMakeByVIN.removeAll()
         decodedModelByVIN.removeAll()
         engineByVIN.removeAll()
+        trimByVIN.removeAll()
+        bodyClassByVIN.removeAll()
+        cityMpgByVIN.removeAll()
+        hwyMpgByVIN.removeAll()
         currentProfile = nil
         currentTier = nil
         persistFavorites()   // write empty state to UserDefaults immediately
@@ -360,18 +384,26 @@ struct QuickDataCacheRow: Codable {
                 .value
 
             var newFavs: Set<String> = []
+            var newOdoByVIN: [String: OdoInfo] = [:]
             for row in rows {
                 let vin = normalizeVIN(row.vin)
                 guard !vin.isEmpty else { continue }
                 newFavs.insert(vin)
 
-                var info = odoByVIN[vin] ?? OdoInfo(odometer: "", testDate: "", privateValue: nil)
-                if let odo = row.odometer, !odo.isEmpty { info.odometer = odo }
-                if let td = row.test_date, !td.isEmpty { info.testDate = td.dateOnly }
-                if let pv = row.private_value, !pv.isEmpty { info.privateValue = formatPrivateValueForDisplay(pv) }
-                odoByVIN[vin] = info
+                let odometer = row.odometer?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let testDate = row.test_date?.dateOnly ?? ""
+                let privateValue = row.private_value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+                guard !odometer.isEmpty || !testDate.isEmpty || !privateValue.isEmpty else { continue }
+
+                newOdoByVIN[vin] = OdoInfo(
+                    odometer: odometer,
+                    testDate: testDate,
+                    privateValue: privateValue.isEmpty ? nil : formatPrivateValueForDisplay(privateValue)
+                )
             }
             favorites = newFavs
+            odoByVIN = newOdoByVIN
             persistFavorites()
             persistOdo()
 
@@ -784,6 +816,38 @@ struct QuickDataCacheRow: Codable {
             }
         } catch {
             print("🔴 NHTSA CACHE: loadNHTSACacheForVIN failed for \(cleanVIN): \(error)")
+        }
+    }
+
+    /// Bulk preloads decoded vehicle data from global_vin_cache_kbuck so cards render
+    /// with stable titles/details on first appearance instead of repainting as each VIN loads.
+    func preloadNHTSACacheForVINs(_ vins: [String]) async {
+        let uniqueVINs = Array(Set(vins.map(normalizeVIN))).filter { !$0.isEmpty }
+        guard !uniqueVINs.isEmpty else { return }
+
+        let missingVINs = uniqueVINs.filter { vin in
+            decodedMakeByVIN[vin] == nil || decodedModelByVIN[vin] == nil
+        }
+        guard !missingVINs.isEmpty else { return }
+
+        let batchSize = 100
+        for start in stride(from: 0, to: missingVINs.count, by: batchSize) {
+            let batch = Array(missingVINs[start..<min(start + batchSize, missingVINs.count)])
+
+            do {
+                let rows: [NHTSACacheUpdate] = try await supabase
+                    .from("global_vin_cache_kbuck")
+                    .select()
+                    .in("vin", values: batch)
+                    .execute()
+                    .value
+
+                for row in rows {
+                    applyNHTSACacheUpdate(row)
+                }
+            } catch {
+                print("🔴 NHTSA CACHE: bulk preload failed for batch size \(batch.count): \(error)")
+            }
         }
     }
 }

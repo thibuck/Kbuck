@@ -4,9 +4,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const HPD_URL =
   "https://www.houstontx.gov/police/auto_dealers_detail/Vehicles_Scheduled_For_Auction.htm";
 const NHTSA_BASE = "https://vpic.nhtsa.dot.gov/api/vehicles/decodevin";
-const NHTSA_DELAY_MS = 500;
+const NHTSA_DELAY_MS = 1_500;
 
-// ─── VIN / value cleaners (mirrors NHTSACleaner in Swift) ───────────────────
+// ─── VIN / value cleaners ────────────────────────────────────────────────────
 
 function normalizeVIN(raw: string): string {
   const allowed = new Set("ABCDEFGHJKLMNPRSTUVWXYZ0123456789");
@@ -78,7 +78,7 @@ function stripTags(html: string): string {
     .trim();
 }
 
-// ─── HPD HTML parser (mirrors HPDParser.parseHTML in Swift) ─────────────────
+// ─── HPD HTML parser ─────────────────────────────────────────────────────────
 
 interface ParsedVehicle {
   vin:           string;
@@ -143,13 +143,11 @@ function parseHPDHTML(html: string): ParsedVehicle[] {
 
     if (cells.length === 0) continue;
 
-    // Skip the page title row
     if (
       cells.length === 1 &&
       cells[0].toLowerCase().trim().startsWith("vehicles scheduled for auction")
     ) continue;
 
-    // Detect the header row — requires Year + Make + Model + VIN at minimum
     if (Object.keys(headerIndex).length === 0) {
       const tempMap: Record<string, number> = {};
       cells.forEach((label, i) => {
@@ -162,13 +160,10 @@ function parseHPDHTML(html: string): ParsedVehicle[] {
       }
     }
 
-    // Data rows
     if (Object.keys(headerIndex).length > 0) {
       const cell = (key: string): string => {
         const idx = headerIndex[key];
-        return idx !== undefined && idx < cells.length
-          ? cells[idx].trim()
-          : "";
+        return idx !== undefined && idx < cells.length ? cells[idx].trim() : "";
       };
 
       const vin = cell("vin");
@@ -195,6 +190,8 @@ interface NHTSARow {
   year:                  number | null;
   make:                  string | null;
   model:                 string | null;
+  trim:                  string | null;
+  body_class:            string | null;
   engine_displacement_l: string | null;
   engine_cylinders:      string | null;
   drive_type:            string | null;
@@ -206,14 +203,11 @@ async function decodeVIN(vin: string): Promise<NHTSARow> {
   if (!res.ok)            throw new Error(`NHTSA HTTP ${res.status}`);
 
   const json = await res.json();
-  const results: Array<{ Variable: string; Value: string | null }> =
-    json.Results ?? [];
+  const results: Array<{ Variable: string; Value: string | null }> = json.Results ?? [];
 
   const get = (name: string): string | null => {
     const norm = name.trim().toLowerCase();
-    const row  = results.find(
-      (r) => r.Variable.trim().toLowerCase() === norm
-    );
+    const row  = results.find((r) => r.Variable.trim().toLowerCase() === norm);
     return cleanValue(row?.Value ?? null);
   };
 
@@ -221,6 +215,10 @@ async function decodeVIN(vin: string): Promise<NHTSARow> {
   const rawModel = get("Model");
   const rawYear  = get("Model Year");
   const rawDrive = get("Drive Type");
+  
+  // Try Trim first, if null try Series
+  const rawTrim  = get("Trim") || get("Series");
+  const rawBody  = get("Body Class");
 
   return {
     year:                  rawYear  ? cleanYear(rawYear)  : null,
@@ -231,19 +229,65 @@ async function decodeVIN(vin: string): Promise<NHTSARow> {
         : rawModel
         ? rawModel.charAt(0).toUpperCase() + rawModel.slice(1).toLowerCase()
         : null,
+    trim:                  rawTrim  ? cleanMake(rawTrim)  : null,
+    body_class:            rawBody  ? cleanMake(rawBody)  : null,
     engine_displacement_l: get("Displacement (L)"),
     engine_cylinders:      get("Engine Number of Cylinders"),
-    // mirrors Swift's `?.capitalized`
     drive_type:            rawDrive
       ? rawDrive.split(" ").map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ")
       : null,
   };
 }
 
+// ─── EPA Fuel Economy API ────────────────────────────────────────────────────
+
+interface EPARow {
+  city_mpg: string | null;
+  hwy_mpg:  string | null;
+}
+
+async function fetchEPA(year: number | null, make: string | null, model: string | null): Promise<EPARow> {
+  if (!year || !make || !model) return { city_mpg: null, hwy_mpg: null };
+
+  try {
+    const searchUrl = `https://www.fueleconomy.gov/ws/rest/vehicle/menu/options?year=${year}&make=${encodeURIComponent(make)}&model=${encodeURIComponent(model)}`;
+    const searchRes = await fetch(searchUrl, { headers: { "Accept": "application/json" } });
+    if (!searchRes.ok) return { city_mpg: null, hwy_mpg: null };
+
+    const text = await searchRes.text();
+    if (!text) return { city_mpg: null, hwy_mpg: null };
+
+    const searchData = JSON.parse(text);
+    let vehicleId = null;
+
+    if (searchData?.menuItem) {
+      if (Array.isArray(searchData.menuItem) && searchData.menuItem.length > 0) {
+        vehicleId = searchData.menuItem[0].value;
+      } else if (searchData.menuItem.value) {
+        vehicleId = searchData.menuItem.value;
+      }
+    }
+
+    if (!vehicleId) return { city_mpg: null, hwy_mpg: null };
+
+    const detailUrl = `https://www.fueleconomy.gov/ws/rest/vehicle/${vehicleId}`;
+    const detailRes = await fetch(detailUrl, { headers: { "Accept": "application/json" } });
+    if (!detailRes.ok) return { city_mpg: null, hwy_mpg: null };
+
+    const detailData = await detailRes.json();
+    return {
+      city_mpg: detailData?.city08 ? String(detailData.city08) : null,
+      hwy_mpg:  detailData?.highway08 ? String(detailData.highway08) : null,
+    };
+  } catch (err) {
+    console.warn(`⚠️ EPA fetch failed gracefully for ${year} ${make} ${model}`);
+    return { city_mpg: null, hwy_mpg: null };
+  }
+}
+
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
-const sleep = (ms: number) =>
-  new Promise<void>((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 Deno.serve(async (_req: Request) => {
   const supabaseURL    = Deno.env.get("HPD_PIPELINE_URL")!;
@@ -254,7 +298,6 @@ Deno.serve(async (_req: Request) => {
   });
 
   try {
-    // 1 — Fetch HPD page
     console.log("🌐 Fetching HPD auction page…");
     const hpdRes = await fetch(HPD_URL);
     if (!hpdRes.ok) {
@@ -265,7 +308,6 @@ Deno.serve(async (_req: Request) => {
     }
     const html = await hpdRes.text();
 
-    // 2 — Parse VINs from HTML
     const vehicles = parseHPDHTML(html);
     console.log(`📋 Parsed ${vehicles.length} valid VINs from HPD page`);
 
@@ -276,7 +318,6 @@ Deno.serve(async (_req: Request) => {
       );
     }
 
-    // 3 — Skip VINs already cached in DB
     const allVINs = vehicles.map((v) => v.vin);
     const { data: existingRows, error: fetchErr } = await db
       .from("global_vin_cache_kbuck")
@@ -288,9 +329,7 @@ Deno.serve(async (_req: Request) => {
     const cachedVINs = new Set((existingRows ?? []).map((r: { vin: string }) => r.vin));
     const pending    = vehicles.filter((v) => !cachedVINs.has(v.vin));
 
-    console.log(
-      `⏭️  Skipping ${cachedVINs.size} already cached — ${pending.length} remaining to decode`
-    );
+    console.log(`⏭️  Skipping ${cachedVINs.size} already cached — ${pending.length} remaining to decode`);
 
     if (pending.length === 0) {
       return new Response(
@@ -299,7 +338,6 @@ Deno.serve(async (_req: Request) => {
       );
     }
 
-    // 4 — Decode each pending VIN via NHTSA + upsert
     let succeeded = 0;
     let failed    = 0;
 
@@ -309,17 +347,22 @@ Deno.serve(async (_req: Request) => {
 
       try {
         const decoded = await decodeVIN(v.vin);
+        const epaData = await fetchEPA(decoded.year, decoded.make, decoded.model);
 
         const row = {
           vin:                   v.vin,
           year:                  decoded.year,
           make:                  decoded.make,
           model:                 decoded.model,
+          trim:                  decoded.trim,
+          body_class:            decoded.body_class,
           engine_cylinders:      decoded.engine_cylinders,
           engine_displacement_l: decoded.engine_displacement_l,
           drive_type:            decoded.drive_type,
           auction_lot_id:        v.auctionLotID,
           auction_price:         v.auctionPrice,
+          city_mpg:              epaData.city_mpg,
+          hwy_mpg:               epaData.hwy_mpg,
         };
 
         const { error } = await db
@@ -328,12 +371,10 @@ Deno.serve(async (_req: Request) => {
 
         if (error) throw error;
 
-        console.log(`✅ [${i + 1}/${pending.length}] Upserted ${v.vin}`);
+        console.log(`✅ [${i + 1}/${pending.length}] Upserted ${v.vin} (Trim: ${decoded.trim || 'N/A'}, Body: ${decoded.body_class || 'N/A'})`);
         succeeded++;
       } catch (err) {
-        console.error(
-          `🔴 [${i + 1}/${pending.length}] Failed for ${v.vin}: ${err}`
-        );
+        console.error(`🔴 [${i + 1}/${pending.length}] Failed for ${v.vin}: ${err}`);
         failed++;
       }
 

@@ -62,6 +62,9 @@ struct ContentView: View {
     @State private var didBootstrapFavorites = false
     @State private var showInitialPaywall: Bool = false
     @State private var isPreloadingHPDCache = false
+    @State private var isPreloadingVehicleCache = false
+    @State private var lastVehicleCachePreloadKey: String = ""
+    @AppStorage("vehicleCacheWarmupInProgress") private var vehicleCacheWarmupInProgress: Bool = false
     @AppStorage("hpdRefreshTrigger") private var hpdRefreshTrigger: Int = 0
     @AppStorage("hpdUserBanned")          private var isUserBanned: Bool = false
     @AppStorage("hasSeenInitialPaywall")  private var hasSeenInitialPaywall: Bool = false
@@ -136,6 +139,7 @@ struct ContentView: View {
                         fetchRole()
                         runGlobalLifecycleSync()
                         await preloadHPDAuctionDataIfNeeded()
+                        startVehicleCachePreload()
                         if !hasSeenInitialPaywall && userRole != "super_admin" {
                             hasSeenInitialPaywall = true
                             showInitialPaywall = true
@@ -153,6 +157,7 @@ struct ContentView: View {
                     fetchRole()
                     runGlobalLifecycleSync()
                     await preloadHPDAuctionDataIfNeeded(force: true)
+                    startVehicleCachePreload()
                     if !hasSeenInitialPaywall && userRole != "super_admin" {
                         hasSeenInitialPaywall = true
                         showInitialPaywall = true
@@ -161,6 +166,8 @@ struct ContentView: View {
                     isAuthenticated = false
                     didBootstrapFavorites = false
                     isUserBanned = false
+                    lastVehicleCachePreloadKey = ""
+                    vehicleCacheWarmupInProgress = false
                     supabaseService.clearAllLocalState()
                     userRole = "user"   // clear role so no stale admin access persists
                 default:
@@ -183,6 +190,7 @@ struct ContentView: View {
             guard isAuthenticated else { return }
             Task {
                 await preloadHPDAuctionDataIfNeeded(force: true)
+                startVehicleCachePreload()
             }
         }
         .sheet(isPresented: $showInitialPaywall) {
@@ -308,6 +316,36 @@ struct ContentView: View {
             // }
         } catch {
             print("🔴 HPD preload failed: \(error.localizedDescription)")
+        }
+    }
+
+    @MainActor
+    private func preloadVehicleCacheForCurrentEntries() async {
+        guard !isPreloadingVehicleCache else { return }
+
+        let entries = (try? JSONDecoder().decode([HPDEntry].self, from: hpdCachedEntriesData)) ?? []
+        let entryVINs = entries.map(\.vin)
+        let favoriteVINs = Array(supabaseService.favorites)
+        let vinsToPreload = Array(Set(entryVINs + favoriteVINs))
+        guard !vinsToPreload.isEmpty else { return }
+
+        let preloadKey = vinsToPreload.sorted().joined(separator: "|")
+        guard preloadKey != lastVehicleCachePreloadKey else { return }
+
+        isPreloadingVehicleCache = true
+        vehicleCacheWarmupInProgress = true
+        defer {
+            isPreloadingVehicleCache = false
+            vehicleCacheWarmupInProgress = false
+        }
+        lastVehicleCachePreloadKey = preloadKey
+
+        await supabaseService.preloadNHTSACacheForVINs(vinsToPreload)
+    }
+
+    private func startVehicleCachePreload() {
+        Task {
+            await preloadVehicleCacheForCurrentEntries()
         }
     }
 

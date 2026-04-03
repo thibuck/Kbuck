@@ -36,6 +36,7 @@ private struct LocationEntry: Identifiable {
     let location: String
     let vehicles: [HPDEntry]
     let count:    Int
+    let headerTime: String?
     let makes:    [(make: String, count: Int)]   // sorted by count desc
 }
 
@@ -61,9 +62,11 @@ struct HomeSummaryView: View {
 
     @AppStorage("hpdCachedEntries") private var hpdCachedEntriesData: Data = Data()
     @AppStorage("hpdRefreshTrigger") private var hpdRefreshTrigger: Int = 0
+    @AppStorage("vehicleCacheWarmupInProgress") private var vehicleCacheWarmupInProgress: Bool = false
     @State private var cachedGroupedSummaries: [DateCard] = []
     @State private var cachedActiveVehicleCount: Int = 0
     @State private var cachedBrandOptions: [BrandFilterOption] = []
+    @State private var hasBaseAuctionData: Bool = false
 
     // MARK: - Collapse state
 
@@ -192,14 +195,19 @@ struct HomeSummaryView: View {
                 let locations: [LocationEntry] = locMap
                     .compactMap { skey, makeHistogram -> LocationEntry? in
                         guard let label = labelMap[skey] else { return nil }
+                        let vehicles = vehicleMap[dateStr]?[skey] ?? []
                         let total = makeHistogram.values.reduce(0, +)
                         let makes = makeHistogram
                             .sorted { $0.value > $1.value }
                             .map { (make: $0.key, count: $0.value) }
+                        let headerTime = vehicles.first.flatMap { vehicle in
+                            parseAuctionDate(vehicle.dateScheduled, timeStr: vehicle.time)?.compactAuctionTime()
+                        }
                         return LocationEntry(
                             location: label,
-                            vehicles: vehicleMap[dateStr]?[skey] ?? [],
+                            vehicles: vehicles,
                             count: total,
+                            headerTime: headerTime,
                             makes: makes
                         )
                     }
@@ -262,9 +270,12 @@ struct HomeSummaryView: View {
             cachedGroupedSummaries = []
             cachedActiveVehicleCount = 0
             cachedBrandOptions = []
+            hasBaseAuctionData = false
             expandedDates = []
             return
         }
+
+        hasBaseAuctionData = !decoded.isEmpty
 
         let searchQuery = brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let searchFilteredEntries: [HPDEntry]
@@ -315,16 +326,20 @@ struct HomeSummaryView: View {
         NavigationStack {
             ZStack {
                 Color(UIColor.systemGroupedBackground).ignoresSafeArea()
-                if cachedGroupedSummaries.isEmpty {
+                if cachedGroupedSummaries.isEmpty && !hasBaseAuctionData {
                     emptyState
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 16) {
-                            if hasBrandFilterAccess, !cachedBrandOptions.isEmpty {
+                            if hasBrandFilterAccess {
                                 brandFilterCard
                             }
-                            ForEach(cachedGroupedSummaries) { card in
-                                dateCard(card)
+                            if cachedGroupedSummaries.isEmpty {
+                                noResultsState
+                            } else {
+                                ForEach(cachedGroupedSummaries) { card in
+                                    dateCard(card)
+                                }
                             }
                         }
                         .padding(.horizontal, 16)
@@ -339,6 +354,10 @@ struct HomeSummaryView: View {
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 6) {
+                        if vehicleCacheWarmupInProgress {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
                         Image(systemName: "building.columns.circle.fill")
                             .foregroundColor(.accentColor)
                             .font(.subheadline)
@@ -398,6 +417,9 @@ struct HomeSummaryView: View {
             recomputeSummaries()
         }
         .onChange(of: brandSearchText) { _, _ in
+            if !brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                isBrandFilterExpanded = true
+            }
             if isBrandFilterExpanded {
                 scheduleBrandFilterAutoCollapse()
             }
@@ -463,6 +485,8 @@ struct HomeSummaryView: View {
                         .font(.caption.bold())
                         .foregroundStyle(.secondary)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
@@ -513,6 +537,7 @@ struct HomeSummaryView: View {
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 5_000_000_000)
             guard brandFilterAutoCollapseToken == token, isBrandFilterExpanded else { return }
+            guard brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             isBrandFilterExpanded = false
         }
     }
@@ -607,6 +632,8 @@ struct HomeSummaryView: View {
                         .font(.caption.bold())
                         .foregroundStyle(.secondary)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
@@ -620,9 +647,9 @@ struct HomeSummaryView: View {
                             date: card.date,
                             location: locEntry.location,
                             brand: nil,
+                            allowedBrands: selectedBrandFilters.isEmpty ? nil : Array(selectedBrandFilters).sorted(),
                             initialSearchText: activeHomeSearchText
                         )) {
-                            let headerAuctionDate = locEntry.vehicles.compactMap { parseAuctionDate($0.dateScheduled, timeStr: $0.time) }.first
                             HStack(alignment: .top, spacing: 8) {
                                 Image(systemName: "mappin.and.ellipse")
                                     .foregroundColor(.blue)
@@ -631,8 +658,8 @@ struct HomeSummaryView: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     HStack(spacing: 6) {
                                         Text(
-                                            headerAuctionDate.map {
-                                                "\(locEntry.location) - \($0.compactAuctionTime())"
+                                            locEntry.headerTime.map {
+                                                "\(locEntry.location) - \($0)"
                                             } ?? locEntry.location
                                         )
                                             .font(.headline)
@@ -649,6 +676,8 @@ struct HomeSummaryView: View {
                                 }
                                 Spacer()
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
 
@@ -658,6 +687,7 @@ struct HomeSummaryView: View {
                                     date: card.date,
                                     location: locEntry.location,
                                     brand: makeEntry.make,
+                                    allowedBrands: nil,
                                     initialSearchText: activeHomeSearchText
                                 )) {
                                     HStack(spacing: 8) {
@@ -685,6 +715,8 @@ struct HomeSummaryView: View {
                                                 .foregroundStyle(.tertiary)
                                         }
                                     }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
                                     .padding(.leading, 4)
                                 }
                                 .buttonStyle(.plain)
@@ -729,5 +761,27 @@ struct HomeSummaryView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
         }
+    }
+
+    private var noResultsState: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 42))
+                .foregroundStyle(.secondary)
+            Text("No Results")
+                .font(.headline)
+            Text("No vehicles match \"\(activeHomeSearchText)\".")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            Button("Clear Search") {
+                brandSearchText = ""
+                isBrandFilterExpanded = true
+            }
+            .font(.subheadline.weight(.semibold))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 40)
     }
 }

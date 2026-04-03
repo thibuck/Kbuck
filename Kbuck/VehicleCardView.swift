@@ -23,6 +23,7 @@ struct VehicleCardView: View {
     var showQuickInventory: Bool = true
     var showFavoriteButton: Bool = true
     var isFavoritesContext: Bool = false
+    var shouldLoadVINCacheOnAppear: Bool = true
 
     @EnvironmentObject private var supabaseService: SupabaseService
     @EnvironmentObject private var storeManager: StoreManager
@@ -39,6 +40,7 @@ struct VehicleCardView: View {
         showQuickInventory: Bool = true,
         showFavoriteButton: Bool = true,
         isFavoritesContext: Bool = false,
+        shouldLoadVINCacheOnAppear: Bool = true,
         initiallyExpanded: Bool = false
     ) {
         self.entry = entry
@@ -46,6 +48,7 @@ struct VehicleCardView: View {
         self.showQuickInventory = showQuickInventory
         self.showFavoriteButton = showFavoriteButton
         self.isFavoritesContext = isFavoritesContext
+        self.shouldLoadVINCacheOnAppear = shouldLoadVINCacheOnAppear
         _isExpanded = State(initialValue: initiallyExpanded)
     }
     @State private var copiedVIN: String? = nil
@@ -72,6 +75,7 @@ struct VehicleCardView: View {
 
     // Quick Data Info
     @State private var showQuickDataInfo = false
+    @State private var transientFavoriteDetailTitle: String? = nil
     @State private var transientFavoriteDetail: String? = nil
     @State private var transientFavoriteDetailToken = UUID()
 
@@ -108,8 +112,63 @@ struct VehicleCardView: View {
     private var engineInfo: String? {
         supabaseService.engineByVIN[entry.vin] ?? supabaseService.engineByVIN[cardKey]
     }
+    private var trimInfo: String? {
+        let trim = supabaseService.trimByVIN[entry.vin] ?? supabaseService.trimByVIN[cardKey]
+        guard let trim, !trim.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return trim
+    }
+    private var cityMpgInfo: String? {
+        let mpg = supabaseService.cityMpgByVIN[entry.vin] ?? supabaseService.cityMpgByVIN[cardKey]
+        guard let mpg, !mpg.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return mpg
+    }
+    private var hwyMpgInfo: String? {
+        let mpg = supabaseService.hwyMpgByVIN[entry.vin] ?? supabaseService.hwyMpgByVIN[cardKey]
+        guard let mpg, !mpg.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return mpg
+    }
     private var displayMake: String { decodedMake ?? brandDisplayName(for: entry.make) }
     private var displayModel: String { decodedModel ?? odoInfo?.realModel?.capitalized ?? entry.model }
+    private var cardTitle: String {
+        let baseTitle = "\(yearStr) \(displayMake) \(displayModel)"
+        guard let trimInfo else { return baseTitle }
+        return "\(baseTitle) \(trimInfo)"
+    }
+    private var homeEngineMpgText: String? {
+        guard !isFavoritesContext, let engine = engineInfo else { return nil }
+
+        let normalizedEngine = engine.replacingOccurrences(of: " V", with: " v")
+        let mpgSuffix: String
+        switch (cityMpgInfo, hwyMpgInfo) {
+        case let (city?, hwy?):
+            mpgSuffix = " - mpg city: \(city) hwy: \(hwy)"
+        case let (city?, nil):
+            mpgSuffix = " - mpg city: \(city)"
+        case let (nil, hwy?):
+            mpgSuffix = " - hwy: \(hwy)"
+        default:
+            mpgSuffix = ""
+        }
+
+        return normalizedEngine + mpgSuffix
+    }
+    private var favoriteEngineLabel: String? {
+        guard isFavoritesContext, let engine = engineInfo else { return nil }
+        return engine.replacingOccurrences(of: " V", with: " v")
+    }
+    private var favoriteMpgDetail: String? {
+        guard isFavoritesContext else { return nil }
+        switch (cityMpgInfo, hwyMpgInfo) {
+        case let (city?, hwy?):
+            return "City: \(city)  Hwy: \(hwy)"
+        case let (city?, nil):
+            return "City: \(city)"
+        case let (nil, hwy?):
+            return "Hwy: \(hwy)"
+        default:
+            return nil
+        }
+    }
     private var yearStr: String   { normalizedYear(entry.year) }
     private var processed: Bool   { lastProcessedVIN == cardKey }
     private var currentServerDailyLimit: Int {
@@ -219,7 +278,7 @@ struct VehicleCardView: View {
                         .frame(width: 20, height: 20)
                 }
 
-                Text("\(yearStr) \(displayMake) \(displayModel)".uppercased())
+                Text(cardTitle.uppercased())
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
@@ -346,7 +405,7 @@ struct VehicleCardView: View {
                         HStack(spacing: 10) {
                             Button {
                                 let relative = relativeInspectionText.isEmpty ? "" : " (\(relativeInspectionText))"
-                                showTransientFavoriteDetail("\(odo.testDate.dateOnly)\(relative)")
+                                showTransientFavoriteDetail(title: "Last Inspection", value: "\(odo.testDate.dateOnly)\(relative)")
                             } label: {
                                 favoriteMetricCard(
                                     title: "Miles",
@@ -358,14 +417,21 @@ struct VehicleCardView: View {
                                 title: "Price",
                                 value: odo.privateValue.formatAsCurrency()
                             )
-                            if let engine = engineInfo {
-                                favoriteMetricCard(title: "Engine", value: engine)
+                            if let engine = favoriteEngineLabel {
+                                Button {
+                                    if let favoriteMpgDetail {
+                                        showTransientFavoriteDetail(title: "MPG", value: favoriteMpgDetail)
+                                    }
+                                } label: {
+                                    favoriteMetricCard(title: "Engine", value: engine)
+                                }
+                                .buttonStyle(.plain)
                             }
                         }
 
-                        if let transientFavoriteDetail {
+                        if let transientFavoriteDetailTitle, let transientFavoriteDetail {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("LAST INSPECTION")
+                                Text(transientFavoriteDetailTitle.uppercased())
                                     .font(.caption2.weight(.semibold))
                                     .foregroundStyle(.secondary)
                                 Text(transientFavoriteDetail)
@@ -419,12 +485,12 @@ struct VehicleCardView: View {
                     }
                 }
 
-                if let engine = engineInfo, !isFavoritesContext {
+                if let engineText = homeEngineMpgText {
                     HStack(spacing: 6) {
                         Image(systemName: "bolt.circle.fill")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
-                        Text(engine)
+                        Text(engineText)
                             .font(.footnote)
                             .lineLimit(1)
                             .minimumScaleFactor(0.9)
@@ -558,6 +624,7 @@ struct VehicleCardView: View {
         )
         .shadow(color: .black.opacity(isFavoritesContext ? 0 : 0.06), radius: isFavoritesContext ? 0 : 8, x: 0, y: 3)
         .task(id: cardKey) {
+            guard shouldLoadVINCacheOnAppear else { return }
             await supabaseService.loadNHTSACacheForVIN(cardKey)
         }
 
@@ -739,20 +806,23 @@ struct VehicleCardView: View {
         UIImpactFeedbackGenerator(style: style).impactOccurred()
     }
 
-    private func showTransientFavoriteDetail(_ value: String) {
+    private func showTransientFavoriteDetail(title: String, value: String) {
         if transientFavoriteDetail == value {
             transientFavoriteDetailToken = UUID()
+            transientFavoriteDetailTitle = nil
             transientFavoriteDetail = nil
             return
         }
 
         let token = UUID()
         transientFavoriteDetailToken = token
+        transientFavoriteDetailTitle = title
         transientFavoriteDetail = value
 
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             guard transientFavoriteDetailToken == token else { return }
+            transientFavoriteDetailTitle = nil
             transientFavoriteDetail = nil
         }
     }

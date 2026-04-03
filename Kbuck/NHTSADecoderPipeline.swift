@@ -109,6 +109,22 @@ struct NHTSACacheUpdate: Codable, Sendable {
     let drive_type: String?
     let auction_lot_id: String?
     let auction_price: Double?
+    let trim: String?
+    let body_class: String?
+    let city_mpg: String?
+    let hwy_mpg: String?
+
+    var displayTrim: String { displayValue(for: trim) }
+    var displayBodyClass: String { displayValue(for: body_class) }
+    var displayCityMpg: String { displayValue(for: city_mpg) }
+    var displayHwyMpg: String { displayValue(for: hwy_mpg) }
+
+    private func displayValue(for value: String?) -> String {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return "-"
+        }
+        return trimmed
+    }
 
     nonisolated init(
         vin: String,
@@ -119,7 +135,11 @@ struct NHTSACacheUpdate: Codable, Sendable {
         engineDisplacementL: String? = nil,
         driveType: String? = nil,
         auctionLotID: String? = nil,
-        auctionPrice: Double? = nil
+        auctionPrice: Double? = nil,
+        trim: String? = nil,
+        bodyClass: String? = nil,
+        cityMpg: String? = nil,
+        hwyMpg: String? = nil
     ) {
         self.vin = vin
         self.year = year
@@ -130,6 +150,10 @@ struct NHTSACacheUpdate: Codable, Sendable {
         self.drive_type = driveType?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.auction_lot_id = auctionLotID?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.auction_price = auctionPrice
+        self.trim = trim?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.body_class = bodyClass?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.city_mpg = cityMpg?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.hwy_mpg = hwyMpg?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     nonisolated func encode(to encoder: Encoder) throws {
@@ -143,6 +167,10 @@ struct NHTSACacheUpdate: Codable, Sendable {
         try container.encodeIfPresent(drive_type, forKey: .drive_type)
         try container.encodeIfPresent(auction_lot_id, forKey: .auction_lot_id)
         try container.encodeIfPresent(auction_price, forKey: .auction_price)
+        try container.encodeIfPresent(trim, forKey: .trim)
+        try container.encodeIfPresent(body_class, forKey: .body_class)
+        try container.encodeIfPresent(city_mpg, forKey: .city_mpg)
+        try container.encodeIfPresent(hwy_mpg, forKey: .hwy_mpg)
     }
 }
 
