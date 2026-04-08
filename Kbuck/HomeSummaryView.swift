@@ -535,7 +535,7 @@ struct HomeSummaryView: View {
         brandFilterAutoCollapseToken = token
 
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            try? await Task.sleep(nanoseconds: 7_000_000_000)
             guard brandFilterAutoCollapseToken == token, isBrandFilterExpanded else { return }
             guard brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             isBrandFilterExpanded = false

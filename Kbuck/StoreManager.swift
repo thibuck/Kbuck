@@ -13,6 +13,8 @@ final class StoreManager: ObservableObject {
     @Published var purchasedSubscriptions: [Product] = []
     @Published var carfaxCredits: Int = 0
     @Published var nextRenewalTier: SubscriptionTier? = nil
+    @Published var nextRenewalDate: Date? = nil
+    @Published var nextRenewalPrice: String? = nil
     @Published var isLoading: Bool = false
     @Published var errorMessage: String? = nil
 
@@ -113,6 +115,7 @@ final class StoreManager: ObservableObject {
         Task {
             await requestProducts()
             await updateCustomerProductStatus()
+            await syncCurrentSubscriptionToSupabase()
         }
     }
 
@@ -134,6 +137,9 @@ final class StoreManager: ObservableObject {
                 do {
                     let transaction = try self.checkVerified(verificationResult)
                     await self.updateCustomerProductStatus()
+                    if transaction.productType == .autoRenewable {
+                        await self.syncCurrentSubscriptionToSupabase()
+                    }
                     await transaction.finish()
                 } catch {
                     self.errorMessage = "Transaction verification failed: \(error.localizedDescription)"
@@ -230,16 +236,15 @@ final class StoreManager: ObservableObject {
         switch result {
         case .success(let verificationResult):
             let transaction = try checkVerified(verificationResult)
+            let jwsToken = verificationResult.jwsRepresentation
 
-            // 1. CRITICAL: Update Supabase FIRST and wait for confirmation.
-            //    This blocks the purchase flow until the DB reflects the new tier,
-            //    preventing can_extract_data RPC from seeing a stale entitlement.
-            await syncPlanToSupabase(productID: product.id)
+            // 1. Send JWS to backend — server verifies and derives all plan data
+            await syncPlanToSupabase(jwsRepresentation: jwsToken)
 
-            // 2. Finish the transaction with Apple.
+            // 2. Finish the transaction with Apple
             await transaction.finish()
 
-            // 3. Update local UI state (this triggers Paywall dismissal via onChange).
+            // 3. Update local UI state
             await updateCustomerProductStatus()
             return true
 
@@ -256,26 +261,51 @@ final class StoreManager: ObservableObject {
 
     // MARK: - Supabase Plan Sync
 
-    private func syncPlanToSupabase(productID: String) async {
-        guard StoreManager.subscriptionIDs.contains(productID) else { return }
-
-        let tier: String
-        if productID == "com.kbuck.platinum.monthly" { tier = "platinum" }
-        else if productID == "com.kbuck.gold.monthly" { tier = "gold" }
-        else if productID == "com.kbuck.silver.monthly" { tier = "silver" }
-        else { return }
-
-        guard let uid = supabase.auth.currentUser?.id else { return }
-
+    /// Sends only the raw JWS to the backend. The server verifies it cryptographically
+    /// and derives plan_tier / next_renewal_date from the Apple-signed payload itself.
+    private func syncPlanToSupabase(jwsRepresentation: String) async {
         do {
-            try await supabase
-                .from("profiles_kbuck")
-                .update(["plan_tier": tier])
-                .eq("id", value: uid.uuidString)
-                .execute()
-            print("✅ SUPABASE SYNCED: User is now \(tier)")
+            try await supabase.functions.invoke(
+                "verify-subscription",
+                options: FunctionInvokeOptions(
+                    body: ["jws": jwsRepresentation]
+                )
+            )
+            print("✅ SUPABASE SECURE SYNC: Server verified and updated the subscription.")
+        } catch let FunctionsError.httpError(code, data) {
+            let payload = String(data: data, encoding: .utf8) ?? "<non-UTF8 payload: \(data.count) bytes>"
+            print("🔴 SUPABASE SECURE SYNC ERROR: httpError(code: \(code), data: \(data.count) bytes)")
+            print("🔴 SUPABASE SECURE SYNC PAYLOAD: \(payload)")
         } catch {
-            print("🔴 SUPABASE SYNC ERROR: \(error)")
+            print("🔴 SUPABASE SECURE SYNC ERROR: \(error)")
+        }
+    }
+
+    private func syncCurrentSubscriptionToSupabase() async {
+        var bestPriority = 0
+
+        for await result in Transaction.currentEntitlements {
+            do {
+                let transaction = try checkVerified(result)
+                guard transaction.productType == .autoRenewable else { continue }
+
+                let priority = priority(for: tier(for: transaction.productID))
+                guard priority > bestPriority else { continue }
+
+                bestPriority = priority
+                await syncPlanToSupabase(jwsRepresentation: result.jwsRepresentation)
+            } catch {
+                continue
+            }
+        }
+    }
+
+    private func priority(for tier: SubscriptionTier) -> Int {
+        switch tier {
+        case .platinum: return 3
+        case .gold: return 2
+        case .silver: return 1
+        case .none: return 0
         }
     }
 
@@ -298,6 +328,9 @@ final class StoreManager: ObservableObject {
     func updateCustomerProductStatus() async {
         var activeSubs: [Product] = []
         var credits: Int = 0
+        var highestPriorityRenewalTier: SubscriptionTier? = nil
+        var selectedRenewalDate: Date? = nil
+        var selectedRenewalPrice: String? = nil
 
         for await result in Transaction.currentEntitlements {
             do {
@@ -307,6 +340,26 @@ final class StoreManager: ObservableObject {
                 case .autoRenewable:
                     if let product = subscriptions.first(where: { $0.id == transaction.productID }) {
                         activeSubs.append(product)
+                    }
+                    let renewalDetails = await renewalDetails(for: transaction)
+                    if let pendingTier = renewalDetails.pendingTier {
+                        let pendingSubscriptionTier = subscriptionTier(forTierKey: pendingTier)
+                        if pendingSubscriptionTier != .none {
+                            let currentPriority = highestPriorityRenewalTier.map(priority(for:)) ?? 0
+                            let pendingPriority = priority(for: pendingSubscriptionTier)
+                            if pendingPriority > currentPriority {
+                                highestPriorityRenewalTier = pendingSubscriptionTier
+                                selectedRenewalDate = renewalDetails.expirationDate
+                                selectedRenewalPrice = renewalPriceLabel(forTier: pendingSubscriptionTier)
+                            }
+                        } else {
+                            highestPriorityRenewalTier = StoreManager.SubscriptionTier.none
+                            selectedRenewalDate = renewalDetails.expirationDate
+                            selectedRenewalPrice = nil
+                        }
+                    } else if highestPriorityRenewalTier == nil {
+                        selectedRenewalDate = renewalDetails.expirationDate
+                        selectedRenewalPrice = renewalPriceLabel(forProductID: transaction.productID)
                     }
                 case .consumable:
                     // Consumables are tracked by counting unfinished/delivered transactions.
@@ -326,7 +379,75 @@ final class StoreManager: ObservableObject {
 
         purchasedSubscriptions = activeSubs
         carfaxCredits = credits
-        nextRenewalTier = await fetchNextRenewalTier(currentTier: activeSubscriptionTier)
+        nextRenewalTier = highestPriorityRenewalTier
+        nextRenewalDate = selectedRenewalDate
+        nextRenewalPrice = selectedRenewalPrice
+    }
+
+    private func renewalDetails(for transaction: Transaction) async -> (pendingTier: String?, expirationDate: Date?) {
+        let expirationDate = transaction.expirationDate
+        guard let groupID = subscriptions.first(where: { $0.id == transaction.productID })?.subscription?.subscriptionGroupID
+                ?? subscriptions.compactMap({ $0.subscription?.subscriptionGroupID }).first,
+              let statuses = try? await Product.SubscriptionInfo.status(for: groupID) else {
+            return (nil, expirationDate)
+        }
+
+        for status in statuses {
+            guard status.state == .subscribed || status.state == .inGracePeriod || status.state == .inBillingRetryPeriod else {
+                continue
+            }
+            guard let renewalInfo = try? checkVerified(status.renewalInfo) else { continue }
+            guard renewalInfo.currentProductID == transaction.productID else { continue }
+
+            if renewalInfo.willAutoRenew == false {
+                return ("free", expirationDate)
+            }
+
+            let nextProductID = renewalInfo.autoRenewPreference ?? renewalInfo.currentProductID
+            guard nextProductID != transaction.productID else {
+                return (nil, expirationDate)
+            }
+
+            let pendingTier = subscriptionTier(forProductID: nextProductID)?.tierKey
+            return (pendingTier, expirationDate)
+        }
+
+        return (nil, expirationDate)
+    }
+
+    private func subscriptionTier(forProductID productID: String) -> SubscriptionTier? {
+        let resolvedTier = tier(for: productID)
+        return resolvedTier == .none ? nil : resolvedTier
+    }
+
+    private func subscriptionTier(forTierKey tierKey: String) -> SubscriptionTier {
+        switch tierKey {
+        case "silver":
+            return .silver
+        case "gold":
+            return .gold
+        case "platinum":
+            return .platinum
+        default:
+            return .none
+        }
+    }
+
+    private func renewalPriceLabel(forTier tier: SubscriptionTier) -> String? {
+        switch tier {
+        case .silver:
+            return renewalPriceLabel(forProductID: "com.kbuck.silver.monthly")
+        case .gold:
+            return renewalPriceLabel(forProductID: "com.kbuck.gold.monthly")
+        case .platinum:
+            return renewalPriceLabel(forProductID: "com.kbuck.platinum.monthly")
+        case .none:
+            return nil
+        }
+    }
+
+    private func renewalPriceLabel(forProductID productID: String) -> String? {
+        subscriptions.first(where: { $0.id == productID })?.displayPrice
     }
 
     private func fetchNextRenewalTier(currentTier: SubscriptionTier) async -> SubscriptionTier? {

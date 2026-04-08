@@ -65,26 +65,14 @@ async function getUserAccess(supabase: ReturnType<typeof createClient>, userId: 
 }
 
 async function consumeUserCredit(supabase: ReturnType<typeof createClient>, userId: string) {
-    const { data: creditRow, error: readError } = await supabase
-        .from("carfax_credits_kbuck")
-        .select("remaining_credits")
-        .eq("user_id", userId)
-        .single();
+    // Usamos la nueva función SQL atómica para evitar el ataque de metralleta (Race Condition)
+    const { data: success, error } = await supabase.rpc("consume_carfax_credit_atomic", {
+        target_user_id: userId
+    });
 
-    if (readError || !creditRow) return { ok: false, error: "Unable to load credit row." };
-
-    const remaining = Number(creditRow.remaining_credits ?? 0);
-    if (remaining <= 0) return { ok: false, error: "No credits remaining." };
-
-    const { error: updateError } = await supabase
-        .from("carfax_credits_kbuck")
-        .update({
-            remaining_credits: remaining - 1,
-            updated_at: new Date().toISOString(),
-        })
-        .eq("user_id", userId);
-
-    if (updateError) return { ok: false, error: updateError.message };
+    if (error) return { ok: false, error: error.message };
+    if (!success) return { ok: false, error: "No credits remaining or update failed." };
+    
     return { ok: true };
 }
 

@@ -196,6 +196,12 @@ struct LoginView: View {
         .sheet(isPresented: $showTerms) {
             LegalTermsView()
         }
+        .onAppear {
+            // A stale locally persisted ban flag must not permanently block login.
+            if supabase.auth.currentUser == nil {
+                isUserBanned = false
+            }
+        }
     }
 
     // MARK: - Nonce helpers
@@ -203,10 +209,19 @@ struct LoginView: View {
     private func randomNonceString(length: Int = 32) -> String {
         var randomBytes = [UInt8](repeating: 0, count: length)
         guard SecRandomCopyBytes(kSecRandomDefault, length, &randomBytes) == errSecSuccess else {
-            fatalError("SecRandomCopyBytes failed")
+            return fallbackNonceString(length: length)
         }
         let charset: [Character] = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
         return String(randomBytes.map { charset[Int($0) % charset.count] })
+    }
+
+    private func fallbackNonceString(length: Int) -> String {
+        let charset = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
+        var generator = SystemRandomNumberGenerator()
+
+        return String((0..<length).map { _ in
+            charset[Int.random(in: 0..<charset.count, using: &generator)]
+        })
     }
 
     private func sha256(_ input: String) -> String {

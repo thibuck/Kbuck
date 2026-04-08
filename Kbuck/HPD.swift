@@ -12,20 +12,10 @@ import StoreKit
 
 struct SafariView: View {
     let url: URL
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
-            SafariControllerView(url: url)
-                .ignoresSafeArea()
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Close") {
-                            dismiss()
-                        }
-                    }
-                }
-        }
+        SafariControllerView(url: url)
+            .ignoresSafeArea()
     }
 }
 
@@ -698,10 +688,7 @@ struct WelcomeOnboardingView: View {
 
     private var dynamicLimitDisplay: String {
         if userRole == "super_admin" { return "Unlimited" }
-        // Prefer Supabase profile tier; fall back to StoreKit local state during network latency
-        let fallbackTierKey = storeManager.activeSubscriptionTier.tierKey
-        let tierName = supabaseService.currentProfile?.plan_tier ?? fallbackTierKey
-        let limit = supabaseService.tierConfigs[tierName.lowercased()]?.daily_fetch_limit ?? 3
+        let limit = supabaseService.tierConfigs[supabaseService.serverTierKey]?.daily_fetch_limit ?? 3
         return limit >= 999999 ? "Unlimited" : "\(limit)"
     }
 
@@ -2852,8 +2839,7 @@ struct HPDView: View {
                 Button {
                     showQuotaSheet = true
                 } label: {
-                    let tierKey = supabaseService.currentProfile?.plan_tier?.lowercased()
-                                  ?? storeManager.activeSubscriptionTier.tierKey
+                    let tierKey = supabaseService.serverTierKey
                     if UIImage(named: tierKey) != nil {
                         Image(tierKey)
                             .resizable()

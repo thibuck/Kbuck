@@ -90,6 +90,12 @@ struct ContentView: View {
     @State private var selectedTab: Int = 0
     @State private var crossTabLocationFilter: String? = nil
 
+    private let homeTab = 0
+    private let favoritesTab = 2
+    private let adminCarfaxTab = 3
+    private let reportsTab = 4
+    private let settingsTab = 5
+
     var body: some View {
         Group {
             if !isAuthReady {
@@ -98,22 +104,27 @@ struct ContentView: View {
                 TabView(selection: $selectedTab) {
                     HomeSummaryView(selectedTab: $selectedTab, targetLocationFilter: $crossTabLocationFilter)
                         .tabItem { Label("HOME", systemImage: "car.circle.fill") }
-                        .tag(0)
+                        .tag(homeTab)
                     // Temporarily hidden from the app UI, but kept in code for later reuse.
                     // HPDView(externalLocationFilter: $crossTabLocationFilter)
                     //     .tabItem { Label("HPD AUCTION", systemImage: "car.fill") }
                     //     .tag(1)
                     HPDView(favoritesOnly: true, externalLocationFilter: .constant(nil))
                         .tabItem { Label("FAVORITES", systemImage: "star.fill") }
-                        .tag(2)
+                        .tag(favoritesTab)
                     if !carfaxVault.savedReports.isEmpty {
                         CarfaxVaultView()
                             .tabItem { Label("MY REPORTS", systemImage: "doc.text.fill") }
-                            .tag(3)
+                            .tag(reportsTab)
+                    }
+                    if userRole == "super_admin" {
+                        AdminCarfaxLookupView()
+                            .tabItem { Label("VIN CARFAX", systemImage: "key.horizontal.fill") }
+                            .tag(adminCarfaxTab)
                     }
                     HPDSettingsView()
                         .tabItem { Label("SETTINGS", systemImage: "gearshape.fill") }
-                        .tag(4)
+                        .tag(settingsTab)
                 }
             } else {
                 LoginView()
@@ -195,11 +206,6 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showInitialPaywall) {
             PaywallView()
-        }
-        .onChange(of: supabaseService.isCarfaxEnabled) { _, isEnabled in
-            if !isEnabled, selectedTab == 3 {
-                selectedTab = 0
-            }
         }
         .hideKeyboardOnTap()
     }

@@ -779,25 +779,42 @@ struct HPDSettingsView: View {
     private var currentCount: Int { supabaseService.currentProfile?.effectiveDailyUsage ?? 0 }
 
     private var currentTierKey: String {
-        supabaseService.currentProfile?.plan_tier?.lowercased() ?? storeManager.activeSubscriptionTier.tierKey
-    }
-
-    private var currentTierDisplayName: String {
-        currentTierKey.capitalized
-    }
-
-    private var currentProfileTierDisplay: String? {
-        guard let tier = supabaseService.currentTier?.trimmingCharacters(in: .whitespacesAndNewlines), !tier.isEmpty else { return nil }
-        return tier.capitalized
+        supabaseService.serverTierKey
     }
 
     private var settingsPlanLabel: String {
-        currentProfileTierDisplay ?? currentTierDisplayName
+        supabaseService.serverTierDisplayName
     }
 
     private var nextRenewalPlanLabel: String? {
-        guard let nextTier = storeManager.nextRenewalTier, nextTier != .none else { return nil }
-        return nextTier.displayName
+        guard let nextTier = storeManager.nextRenewalTier else { return nil }
+
+        let nextTierLabel = nextTier == .none ? "Free" : nextTier.displayName
+        guard nextTierLabel != settingsPlanLabel else { return nil }
+
+        return nextTierLabel
+    }
+
+    private var nextRenewalDateLabel: String? {
+        guard let date = storeManager.nextRenewalDate else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter.string(from: date)
+    }
+
+    private var nextRenewalSummary: String? {
+        guard let nextRenewalPlanLabel else { return nil }
+
+        var parts: [String] = ["Renews as \(nextRenewalPlanLabel)"]
+        if let nextRenewalDateLabel {
+            parts.append("on \(nextRenewalDateLabel)")
+        }
+        if let nextRenewalPrice = storeManager.nextRenewalPrice {
+            parts.append("for \(nextRenewalPrice)")
+        }
+        return parts.joined(separator: " ")
     }
 
     private var heroBackgroundColors: [Color] {
@@ -969,18 +986,21 @@ struct HPDSettingsView: View {
                         .font(.caption.weight(.semibold))
                         .tracking(1.2)
                         .foregroundStyle(heroMutedTextColor)
-                    Text("Settings")
-                        .font(.title2.weight(.bold))
-                        .foregroundStyle(heroPrimaryTextColor)
                     Text(userEmail ?? "Account")
                         .font(.subheadline)
                         .foregroundStyle(heroSecondaryTextColor)
                         .lineLimit(1)
-                    if let nextRenewalPlanLabel {
-                        Text("Next Renewal: \(nextRenewalPlanLabel)")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Current Plan: \(settingsPlanLabel)")
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(heroMutedTextColor)
+                            .foregroundStyle(heroPrimaryTextColor)
                             .lineLimit(1)
+                        if let nextRenewalSummary {
+                            Text(nextRenewalSummary)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(heroMutedTextColor)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
 
@@ -988,13 +1008,15 @@ struct HPDSettingsView: View {
             }
 
             HStack(spacing: 10) {
-                SettingsMetricChip(
-                    title: "Plan",
-                    value: isLoadingProfile && currentProfileTierDisplay == nil ? "Loading..." : settingsPlanLabel,
-                    tint: heroPrimaryTextColor,
-                    titleTint: heroMutedTextColor,
-                    backgroundTint: heroChipBackground
-                )
+                if let nextRenewalDateLabel {
+                    SettingsMetricChip(
+                        title: "Renewal",
+                        value: nextRenewalDateLabel,
+                        tint: heroPrimaryTextColor,
+                        titleTint: heroMutedTextColor,
+                        backgroundTint: heroChipBackground
+                    )
+                }
 
                 SettingsMetricChip(
                     title: userRole == "super_admin" ? "Access" : "Usage",
@@ -1011,11 +1033,11 @@ struct HPDSettingsView: View {
 
             if userRole != "super_admin" {
                 HStack(spacing: 10) {
-                    if storeManager.activeSubscriptionTier != .none {
+                    if currentTierKey != "free" {
                         Button {
                             showManageSubscriptions = true
                         } label: {
-                            Text("Manage")
+                            Text("Manage in App Store")
                                 .font(.subheadline.weight(.semibold))
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 12)
@@ -1027,7 +1049,7 @@ struct HPDSettingsView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
 
-                    if storeManager.activeSubscriptionTier != .platinum {
+                    if currentTierKey != "platinum" {
                         Button {
                             showPaywall = true
                         } label: {

@@ -848,45 +848,25 @@ struct VehicleCardView: View {
         isFetchingCarfax = true
         defer { isFetchingCarfax = false }
 
-        let requestPayload: [String: String] = [
-            "vin": vin,
-            "year": normalizedYear(entry.year),
-            "make": brandDisplayName(for: entry.make),
-            "model": preferredCarfaxModel(),
-            "raw_make": entry.make,
-            "raw_model": entry.model
-        ]
         do {
-            let accessToken = supabase.auth.currentSession?.accessToken ?? ""
-            let anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRuZXNjdXFlZ21laGF6dWZmbXRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2OTI4ODEsImV4cCI6MjA4OTI2ODg4MX0.LszstZi962himWPuoSWEXR9Xzhbl2ncewJSGzTnoeIg"
-
-            guard let url = URL(string: "https://tnescuqegmehazuffmte.supabase.co/functions/v1/fetch-vhr") else {
-                presentCarfaxError("Invalid edge function URL")
-                return
-            }
-
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-            request.setValue(anonKey, forHTTPHeaderField: "apikey")
-            request.httpBody = try JSONEncoder().encode(requestPayload)
-
-            let (data, _) = try await URLSession.shared.data(for: request)
-
-            guard let html = extractCarfaxHTML(from: data) else {
-                presentCarfaxError("Missing HTML payload in fetch-vhr response")
-                return
-            }
-
-            let cheapvhrReportID = extractCheapVHRReportID(from: data)
+            let result = try await CarfaxReportFetcher.fetchReport(
+                requestPayload: CarfaxFetchRequest(
+                    vin: vin,
+                    year: normalizedYear(entry.year),
+                    make: brandDisplayName(for: entry.make),
+                    model: preferredCarfaxModel(),
+                    rawMake: entry.make,
+                    rawModel: entry.model
+                ),
+                accessToken: supabase.auth.currentSession?.accessToken ?? ""
+            )
             carfaxVault.saveReport(
                 vin: vin,
-                html: html,
+                html: result.html,
                 year: entry.year,
                 make: entry.make,
                 model: entry.model,
-                cheapvhrReportID: cheapvhrReportID
+                cheapvhrReportID: result.cheapvhrReportID
             )
             if let url = carfaxVault.getReportURL(for: vin) {
                 carfaxReportURL = url
@@ -894,65 +874,6 @@ struct VehicleCardView: View {
         } catch {
             presentCarfaxError(error.localizedDescription)
         }
-    }
-
-    private func extractCheapVHRReportID(from data: Data) -> String? {
-        guard
-            let object = try? JSONSerialization.jsonObject(with: data),
-            let dictionary = object as? [String: Any]
-        else {
-            return nil
-        }
-
-        let candidateKeys = ["cheapvhr_report_id", "cheapvhrReportID", "report_id", "reportId", "id"]
-        for key in candidateKeys {
-            if let reportID = dictionary[key] as? String,
-               !reportID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return reportID.trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-        }
-
-        if let dataDictionary = dictionary["data"] as? [String: Any] {
-            for key in candidateKeys {
-                if let reportID = dataDictionary[key] as? String,
-                   !reportID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    return reportID.trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-            }
-        }
-
-        return nil
-    }
-
-    private func extractCarfaxHTML(from data: Data) -> String? {
-        if let htmlString = String(data: data, encoding: .utf8),
-           htmlString.localizedCaseInsensitiveContains("<html") {
-            return htmlString
-        }
-
-        guard
-            let object = try? JSONSerialization.jsonObject(with: data),
-            let dictionary = object as? [String: Any]
-        else {
-            return nil
-        }
-
-        let candidateKeys = ["html", "report_html", "reportHTML", "payload", "body"]
-        for key in candidateKeys {
-            if let html = dictionary[key] as? String, html.localizedCaseInsensitiveContains("<html") {
-                return html
-            }
-        }
-
-        if let dataDictionary = dictionary["data"] as? [String: Any] {
-            for key in candidateKeys {
-                if let html = dataDictionary[key] as? String, html.localizedCaseInsensitiveContains("<html") {
-                    return html
-                }
-            }
-        }
-
-        return nil
     }
 
     private func purchaseAndFetchCarfax(preferredProductID productID: String) async {

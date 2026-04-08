@@ -3,6 +3,9 @@ import StoreKit
 
 // MARK: - Tier Feature Data Source
 
+private let termsOfUseURL = URL(string: "https://example.com/terms")
+private let privacyPolicyURL = URL(string: "https://example.com/privacy")
+
 /// Maps a StoreKit product ID to the `tier_name` key used in `subscription_tiers_kbuck`.
 private func tierKey(for productId: String) -> String {
     switch productId {
@@ -247,8 +250,12 @@ struct PaywallView: View {
             }
 
             HStack(spacing: 24) {
-                Link("Terms of Use", destination: URL(string: "https://example.com/terms")!)
-                Link("Privacy Policy", destination: URL(string: "https://example.com/privacy")!)
+                if let termsOfUseURL {
+                    Link("Terms of Use", destination: termsOfUseURL)
+                }
+                if let privacyPolicyURL {
+                    Link("Privacy Policy", destination: privacyPolicyURL)
+                }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
