@@ -6,6 +6,19 @@ import CoreLocation
 import StoreKit
 import Supabase
 
+private extension Color {
+    init(hex: String) {
+        let cleaned = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var value: UInt64 = 0
+        Scanner(string: cleaned).scanHexInt64(&value)
+
+        let r = Double((value >> 16) & 0xFF) / 255
+        let g = Double((value >> 8) & 0xFF) / 255
+        let b = Double(value & 0xFF) / 255
+        self.init(red: r, green: g, blue: b)
+    }
+}
+
 // MARK: - VehicleCardView
 //
 // Fully self-contained, reusable vehicle card that mirrors 100% of the UI
@@ -22,13 +35,13 @@ struct VehicleCardView: View {
     var showAddress: Bool = true
     var showQuickInventory: Bool = true
     var showFavoriteButton: Bool = true
+    var showBrandLogo: Bool = true
     var isFavoritesContext: Bool = false
     var shouldLoadVINCacheOnAppear: Bool = true
 
     @EnvironmentObject private var supabaseService: SupabaseService
     @EnvironmentObject private var storeManager: StoreManager
     @AppStorage("userRole")         private var userRole: String = "user"
-    @AppStorage("openWebInSafari") private var openWebInSafari: Bool = false
     @StateObject private var carfaxVault = CarfaxVault.shared
 
     // MARK: Card state
@@ -39,6 +52,7 @@ struct VehicleCardView: View {
         showAddress: Bool = true,
         showQuickInventory: Bool = true,
         showFavoriteButton: Bool = true,
+        showBrandLogo: Bool = true,
         isFavoritesContext: Bool = false,
         shouldLoadVINCacheOnAppear: Bool = true,
         initiallyExpanded: Bool = false
@@ -47,6 +61,7 @@ struct VehicleCardView: View {
         self.showAddress = showAddress
         self.showQuickInventory = showQuickInventory
         self.showFavoriteButton = showFavoriteButton
+        self.showBrandLogo = showBrandLogo
         self.isFavoritesContext = isFavoritesContext
         self.shouldLoadVINCacheOnAppear = shouldLoadVINCacheOnAppear
         _isExpanded = State(initialValue: initiallyExpanded)
@@ -180,12 +195,42 @@ struct VehicleCardView: View {
     private var hasStatVinAccess: Bool {
         supabaseService.hasServerPaidPlan
     }
+    private var statVinLookupStatus: StatVinLookupStatus {
+        supabaseService.statVinStatus(for: cardKey)
+    }
+    private var statVinButtonTint: Color {
+        switch statVinLookupStatus {
+        case .unknown:
+            return .gray
+        case .noHistory:
+            return Color(red: 0.28, green: 0.72, blue: 0.98)
+        case .hasHistory:
+            return Color(red: 1.0, green: 0.33, blue: 0.68)
+        }
+    }
+    private var statVinStatusLabel: String? {
+        switch statVinLookupStatus {
+        case .unknown:
+            return nil
+        case .noHistory:
+            return "No pics"
+        case .hasHistory:
+            return "Pics found"
+        }
+    }
     private var isCarfaxEnabled: Bool {
         supabaseService.isCarfaxEnabled
     }
     private var hasSavedCarfaxReport: Bool {
         carfaxVault.getReportURL(for: entry.vin) != nil
     }
+    private var cardSurfaceColor: Color { Color(hex: "#111111") }
+    private var cardElevatedColor: Color { Color(hex: "#1A1A1A") }
+    private var cardBorderColor: Color { Color.white.opacity(0.10) }
+    private var cardPrimaryTextColor: Color { Color.white.opacity(0.82) }
+    private var cardSecondaryTextColor: Color { Color.white.opacity(0.44) }
+    private var neutralActionTint: Color { Color.white.opacity(0.18) }
+    private var primaryActionTint: Color { Color(hex: "#C5A455").opacity(0.52) }
 
     private var shareText: String {
         var parts = ["\(yearStr) \(displayMake) \(displayModel)", "VIN: \(entry.vin)"]
@@ -238,8 +283,12 @@ struct VehicleCardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color(uiColor: .tertiarySystemGroupedBackground))
+        .background(cardElevatedColor)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(cardBorderColor.opacity(0.7), lineWidth: 0.5)
+        }
     }
 
     @ViewBuilder
@@ -247,16 +296,16 @@ struct VehicleCardView: View {
         HStack(spacing: 8) {
             Image(systemName: systemImage)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(cardSecondaryTextColor)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title.uppercased())
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(cardSecondaryTextColor)
 
                 Text(value)
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(cardPrimaryTextColor)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
@@ -271,15 +320,18 @@ struct VehicleCardView: View {
         VStack(alignment: .leading, spacing: 8) {
             // ── Header (always visible) — tap to expand/collapse ──────────
             HStack(alignment: .center, spacing: 8) {
-                if let asset = brandAssetName(for: displayMake) {
+                if showBrandLogo, let asset = brandAssetName(for: displayMake) {
                     Image(asset)
                         .resizable()
                         .scaledToFit()
                         .frame(width: 20, height: 20)
+                        .padding(6)
+                        .background(cardElevatedColor, in: Circle())
                 }
 
                 Text(cardTitle.uppercased())
                     .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(cardPrimaryTextColor)
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -292,7 +344,7 @@ struct VehicleCardView: View {
                     let odoInK = odoInt / 1000
                     HStack(spacing: 4) {
                         Image(systemName: "fuelpump.fill")
-                            .foregroundColor(.gray)
+                            .foregroundColor(cardSecondaryTextColor)
                         Text("\(odoInK)k")
                     }
                     .font(.subheadline)
@@ -306,7 +358,7 @@ struct VehicleCardView: View {
                     } label: {
                         Image(systemName: "bolt.car.fill")
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(cardSecondaryTextColor)
                     }
                     .buttonStyle(.plain)
                 }
@@ -326,7 +378,7 @@ struct VehicleCardView: View {
                     } label: {
                         Image(systemName: "star.fill")
                             .font(.subheadline)
-                            .foregroundStyle(isFav ? AnyShapeStyle(.yellow) : AnyShapeStyle(.secondary))
+                            .foregroundStyle(isFav ? AnyShapeStyle(primaryActionTint) : AnyShapeStyle(cardSecondaryTextColor))
                     }
                     .buttonStyle(.plain)
                 }
@@ -340,6 +392,7 @@ struct VehicleCardView: View {
             // ── Expanded content ───────────────────────────────────────────
             if isExpanded {
                 Divider()
+                    .overlay(Color.white.opacity(0.07))
 
                 // VIN row — tap to copy
                 Group {
@@ -349,16 +402,17 @@ struct VehicleCardView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "tag.fill")
                                 .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(cardSecondaryTextColor)
                             Text("VIN: \(entry.vin)")
                                 .font(.footnote)
+                                .foregroundStyle(cardPrimaryTextColor)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.9)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             if copiedVIN == entry.vin {
                                 Text("Copied!")
                                     .font(.caption2)
-                                    .foregroundStyle(.green)
+                                    .foregroundStyle(primaryActionTint)
                             }
                             Spacer(minLength: 0)
                         }
@@ -433,27 +487,32 @@ struct VehicleCardView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(transientFavoriteDetailTitle.uppercased())
                                     .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(cardSecondaryTextColor)
                                 Text(transientFavoriteDetail)
                                     .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(.primary)
+                                    .foregroundStyle(cardPrimaryTextColor)
                                     .lineLimit(2)
                                     .minimumScaleFactor(0.8)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 9)
-                            .background(Color(uiColor: .tertiarySystemGroupedBackground))
+                            .background(cardElevatedColor)
                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(cardBorderColor.opacity(0.7), lineWidth: 0.5)
+                            }
                             .transition(.opacity.combined(with: .move(edge: .top)))
                         }
                     } else {
                         HStack(spacing: 6) {
                             Image(systemName: "fuelpump.fill")
                                 .font(.footnote)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(cardSecondaryTextColor)
                             Text(odo.odometer.formatWithCommas() + " miles")
                                 .font(.footnote)
+                                .foregroundStyle(cardPrimaryTextColor)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.9)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -463,9 +522,10 @@ struct VehicleCardView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "clock.fill")
                                 .font(.footnote)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(cardSecondaryTextColor)
                             Text("\(odo.testDate.dateOnly) \(odo.testDate.dateOnly.timeAgoShort())")
                                 .font(.footnote)
+                                .foregroundStyle(cardPrimaryTextColor)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.9)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -475,9 +535,10 @@ struct VehicleCardView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "banknote.fill")
                                 .font(.footnote)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(cardSecondaryTextColor)
                             Text(odo.privateValue.formatAsCurrency())
                                 .font(isFavoritesContext ? .subheadline.weight(.semibold) : .footnote)
+                                .foregroundStyle(cardPrimaryTextColor)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.9)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -489,9 +550,10 @@ struct VehicleCardView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "bolt.circle.fill")
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(cardSecondaryTextColor)
                         Text(engineText)
                             .font(.footnote)
+                            .foregroundStyle(cardPrimaryTextColor)
                             .lineLimit(1)
                             .minimumScaleFactor(0.9)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -558,7 +620,7 @@ struct VehicleCardView: View {
                             Image(systemName: "hammer.fill")
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(VINFailureTracker.shared.status(for: cardKey).isRed ? .red : .blue)
+                        .tint(VINFailureTracker.shared.status(for: cardKey).isRed ? .red.opacity(0.75) : primaryActionTint)
                         .frame(maxWidth: .infinity)
                     }
 
@@ -566,6 +628,7 @@ struct VehicleCardView: View {
                         Image(systemName: "square.and.arrow.up.fill")
                     }
                     .buttonStyle(.bordered)
+                    .tint(neutralActionTint)
                     .frame(maxWidth: .infinity)
 
                     if !isAddedToCalendar {
@@ -578,17 +641,29 @@ struct VehicleCardView: View {
                             Image(systemName: "calendar.badge.plus")
                         }
                         .buttonStyle(.bordered)
+                        .tint(neutralActionTint)
                         .frame(maxWidth: .infinity)
                     }
 
                     if hasStatVinAccess {
-                        Button {
-                            haptic(.light)
-                            showWebAlert = true
-                        } label: {
-                            Image(systemName: "globe")
+                        VStack(spacing: 4) {
+                            Button {
+                                haptic(.light)
+                                showWebAlert = true
+                            } label: {
+                                Image(systemName: "globe")
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(statVinButtonTint)
+                            .frame(maxWidth: .infinity)
+
+                            if let statVinStatusLabel {
+                                Text(statVinStatusLabel)
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(statVinButtonTint.opacity(0.92))
+                                    .lineLimit(1)
+                            }
                         }
-                        .buttonStyle(.bordered)
                         .frame(maxWidth: .infinity)
                     }
 
@@ -598,6 +673,7 @@ struct VehicleCardView: View {
                         Image(systemName: "info.circle.fill")
                     }
                     .buttonStyle(.bordered)
+                    .tint(neutralActionTint)
                     .frame(maxWidth: .infinity)
 
                     if hasSavedCarfaxReport {
@@ -605,24 +681,25 @@ struct VehicleCardView: View {
                             openReport(for: entry.vin)
                         } label: {
                             Image(systemName: "doc.text.fill")
-                                .foregroundColor(.blue)
+                                .foregroundColor(cardPrimaryTextColor)
                         }
                         .buttonStyle(.bordered)
+                        .tint(neutralActionTint)
                         .frame(maxWidth: .infinity)
                     }
                 }
             }
         }
         .font(.system(.subheadline))
-        .foregroundStyle(.primary)
+        .foregroundStyle(cardPrimaryTextColor)
         .padding(16)
-        .background(isFavoritesContext ? Color.clear : Color(uiColor: .secondarySystemGroupedBackground))
+        .background(isFavoritesContext ? Color.clear : cardSurfaceColor)
         .clipShape(RoundedRectangle(cornerRadius: isFavoritesContext ? 0 : 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: isFavoritesContext ? 0 : 16, style: .continuous)
-                .stroke(processed ? Color.blue.opacity(0.4) : Color.clear, lineWidth: 1)
+                .stroke(processed ? primaryActionTint.opacity(0.6) : cardBorderColor, lineWidth: 0.5)
         )
-        .shadow(color: .black.opacity(isFavoritesContext ? 0 : 0.06), radius: isFavoritesContext ? 0 : 8, x: 0, y: 3)
+        .shadow(color: .black.opacity(isFavoritesContext ? 0 : 0.24), radius: isFavoritesContext ? 0 : 12, x: 0, y: 6)
         .task(id: cardKey) {
             guard shouldLoadVINCacheOnAppear else { return }
             await supabaseService.loadNHTSACacheForVIN(cardKey)
@@ -698,17 +775,26 @@ struct VehicleCardView: View {
             Button("Cancel", role: .cancel) {}
             Button("Open Report") {
                 if let url = URL(string: "https://stat.vin/cars/\(entry.vin)") {
-                    if openWebInSafari {
-                        UIApplication.shared.open(url)
-                    } else {
-                        statVinURL = url
-                    }
+                    statVinURL = url
                 }
             }
         } message: { Text("Do you want to view the report for this VIN?") }
 
         .sheet(isPresented: Binding(get: { statVinURL != nil }, set: { if !$0 { statVinURL = nil } })) {
-            if let url = statVinURL { SafariView(url: url).ignoresSafeArea() }
+            if let url = statVinURL {
+                StatVinBrowserView(initialURL: url) { resolvedURL in
+                    let status = Self.statVinStatus(for: resolvedURL)
+                    guard status != .unknown else { return }
+                    Task {
+                        await supabaseService.saveStatVinLookupResult(
+                            forVIN: cardKey,
+                            status: status,
+                            resolvedURL: resolvedURL
+                        )
+                    }
+                }
+                .ignoresSafeArea()
+            }
         }
 
         .sheet(isPresented: Binding(get: { carfaxReportURL != nil }, set: { if !$0 { carfaxReportURL = nil } })) {
@@ -837,6 +923,17 @@ struct VehicleCardView: View {
     private func openReport(for vin: String) {
         guard let url = carfaxVault.getReportURL(for: vin) else { return }
         carfaxReportURL = url
+    }
+
+    private nonisolated static func statVinStatus(for url: URL) -> StatVinLookupStatus {
+        let lowercasedURL = url.absoluteString.lowercased()
+        if lowercasedURL.contains("stat.vin/vin-decoding/") {
+            return .noHistory
+        }
+        if lowercasedURL.contains("stat.vin/cars/") {
+            return .hasHistory
+        }
+        return .unknown
     }
 
     private func fetchCarfaxReport() async {

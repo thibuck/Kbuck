@@ -41,6 +41,16 @@ struct AppSettingsRow: Codable {
     let carfax_enabled: Bool?
 }
 
+enum StatVinLookupStatus: String, Codable, Sendable {
+    case unknown
+    case noHistory = "no_history"
+    case hasHistory = "has_history"
+
+    init(rawValueOrUnknown rawValue: String?) {
+        self = StatVinLookupStatus(rawValue: rawValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "") ?? .unknown
+    }
+}
+
 // MARK: - Rate Limit Response
 
 struct RateLimitResponse: Codable {
@@ -141,6 +151,13 @@ struct QuickDataCacheRow: Codable {
     var real_model: String?
 }
 
+private struct StatVinCacheUpsertRow: Encodable {
+    let vin: String
+    let stat_vin_status: String
+    let stat_vin_resolved_url: String?
+    let stat_vin_checked_at: String
+}
+
 // MARK: - Service
 
 @MainActor final class SupabaseService: ObservableObject {
@@ -155,6 +172,8 @@ struct QuickDataCacheRow: Codable {
     @Published private(set) var bodyClassByVIN: [String: String] = [:]
     @Published private(set) var cityMpgByVIN: [String: String] = [:]
     @Published private(set) var hwyMpgByVIN: [String: String] = [:]
+    @Published private(set) var statVinStatusByVIN: [String: StatVinLookupStatus] = [:]
+    @Published private(set) var statVinResolvedURLByVIN: [String: String] = [:]
     @Published private(set) var currentProfile: UserUsageProfile? = nil
     @Published private(set) var currentTier: String? = nil
     @Published private(set) var tierConfigs: [String: TierConfig] = [:]
@@ -314,6 +333,12 @@ struct QuickDataCacheRow: Codable {
         if let hwyMpg = update.hwy_mpg?.trimmingCharacters(in: .whitespacesAndNewlines), !hwyMpg.isEmpty {
             hwyMpgByVIN[vin] = hwyMpg
         }
+
+        applyStatVinCacheFields(
+            vin: vin,
+            status: update.stat_vin_status,
+            resolvedURL: update.stat_vin_resolved_url
+        )
     }
 
     /// Strictly local browser/network cache wipe.
@@ -358,6 +383,8 @@ struct QuickDataCacheRow: Codable {
         bodyClassByVIN.removeAll()
         cityMpgByVIN.removeAll()
         hwyMpgByVIN.removeAll()
+        statVinStatusByVIN.removeAll()
+        statVinResolvedURLByVIN.removeAll()
         currentProfile = nil
         currentTier = nil
         persistFavorites()   // write empty state to UserDefaults immediately
@@ -785,6 +812,44 @@ struct QuickDataCacheRow: Codable {
         _ = try? await supabase.rpc("reset_user_limits", params: ["target_user_id": userId.uuidString]).execute()
     }
 
+    func statVinStatus(for vin: String) -> StatVinLookupStatus {
+        statVinStatusByVIN[normalizeVIN(vin)] ?? .unknown
+    }
+
+    func statVinResolvedURL(for vin: String) -> URL? {
+        let cleanVIN = normalizeVIN(vin)
+        guard let rawURL = statVinResolvedURLByVIN[cleanVIN] else { return nil }
+        return URL(string: rawURL)
+    }
+
+    func saveStatVinLookupResult(forVIN vin: String, status: StatVinLookupStatus, resolvedURL: URL) async {
+        let cleanVIN = normalizeVIN(vin)
+        guard !cleanVIN.isEmpty else { return }
+
+        applyStatVinCacheFields(
+            vin: cleanVIN,
+            status: status.rawValue,
+            resolvedURL: resolvedURL.absoluteString
+        )
+
+        let row = StatVinCacheUpsertRow(
+            vin: cleanVIN,
+            stat_vin_status: status.rawValue,
+            stat_vin_resolved_url: resolvedURL.absoluteString,
+            stat_vin_checked_at: ISO8601DateFormatter().string(from: Date())
+        )
+
+        do {
+            try await supabase
+                .from("global_vin_cache_kbuck")
+                .upsert(row, onConflict: "vin")
+                .execute()
+            print("✅ STAT.VIN CACHE: Saved \(status.rawValue) for \(cleanVIN)")
+        } catch {
+            print("🔴 STAT.VIN CACHE: save failed for \(cleanVIN): \(error)")
+        }
+    }
+
     // MARK: - NHTSA Cache: on-demand loader from global_vin_cache_kbuck
 
     /// Loads decoded vehicle data (make, model, engine) for a single VIN from
@@ -848,6 +913,25 @@ struct QuickDataCacheRow: Codable {
             } catch {
                 print("🔴 NHTSA CACHE: bulk preload failed for batch size \(batch.count): \(error)")
             }
+        }
+    }
+
+    private func applyStatVinCacheFields(vin: String, status: String?, resolvedURL: String?) {
+        let cleanVIN = normalizeVIN(vin)
+        guard !cleanVIN.isEmpty else { return }
+
+        let lookupStatus = StatVinLookupStatus(rawValueOrUnknown: status)
+        if lookupStatus == .unknown {
+            statVinStatusByVIN.removeValue(forKey: cleanVIN)
+        } else {
+            statVinStatusByVIN[cleanVIN] = lookupStatus
+        }
+
+        let trimmedResolvedURL = resolvedURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmedResolvedURL.isEmpty {
+            statVinResolvedURLByVIN.removeValue(forKey: cleanVIN)
+        } else {
+            statVinResolvedURLByVIN[cleanVIN] = trimmedResolvedURL
         }
     }
 }

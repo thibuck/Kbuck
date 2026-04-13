@@ -1,5 +1,29 @@
 import SwiftUI
 
+private extension Color {
+    init(hex: String) {
+        let cleaned = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var value: UInt64 = 0
+        Scanner(string: cleaned).scanHexInt64(&value)
+
+        let r, g, b: UInt64
+        switch cleaned.count {
+        case 6:
+            (r, g, b) = ((value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff)
+        default:
+            (r, g, b) = (0x1a, 0x6e, 0xf5)
+        }
+
+        self.init(
+            .sRGB,
+            red: Double(r) / 255,
+            green: Double(g) / 255,
+            blue: Double(b) / 255,
+            opacity: 1
+        )
+    }
+}
+
 // MARK: - Data models
 
 private struct InlineSearchBar: View {
@@ -108,6 +132,26 @@ struct HomeSummaryView: View {
 
     private var currentTierLimit: Int {
         supabaseService.currentServerDailyLimit
+    }
+
+    private var brandFilterSummaryLabel: String {
+        if selectedBrandFilters.count == 1, let selected = selectedBrandFilters.first {
+            return brandDisplayName(for: selected)
+        }
+        return "All brands"
+    }
+
+    private func displayDateTitle(for rawDate: String) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM/dd/yyyy"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+
+        guard let date = formatter.date(from: rawDate) else { return rawDate }
+
+        let displayFormatter = DateFormatter()
+        displayFormatter.dateFormat = "MMMM d, yyyy"
+        displayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        return displayFormatter.string(from: date)
     }
 
     // MARK: - Address normalisation (mirrors HPDView.sanitizedAddressForMaps + streetNumberKey)
@@ -325,7 +369,7 @@ struct HomeSummaryView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(UIColor.systemGroupedBackground).ignoresSafeArea()
+                Color(hex: "#0A0A0A").ignoresSafeArea()
                 if cachedGroupedSummaries.isEmpty && !hasBaseAuctionData {
                     emptyState
                 } else {
@@ -353,37 +397,56 @@ struct HomeSummaryView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    HStack(spacing: 6) {
+                    HStack(alignment: .top) {
                         if vehicleCacheWarmupInProgress {
                             ProgressView()
                                 .controlSize(.small)
                         }
-                        Image(systemName: "building.columns.circle.fill")
-                            .foregroundColor(.accentColor)
-                            .font(.subheadline)
-                        Text("HPD Auction (\(cachedActiveVehicleCount))")
-                            .font(.headline)
-                            .foregroundStyle(.primary)
-                    }
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showQuotaSheet = true
-                    } label: {
-                        if let currentTier = toolbarTierKey {
-                            if UIImage(named: currentTier) != nil {
-                                Image(currentTier)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(width: 30, height: 30)
-                            } else {
-                                Image(systemName: "star.shield.fill")
-                                    .font(.title2)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("HPD AUCTION")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(Color.white.opacity(0.32))
+                                .kerning(2)
+
+                            Text("Vehicles")
+                                .font(.system(size: 26, weight: .semibold))
+                                .foregroundColor(.white)
+                                .kerning(-1)
+
+                            Rectangle()
+                                .fill(Color(hex: "#C5A455"))
+                                .frame(width: 24, height: 1.5)
+                                .cornerRadius(1)
+                        }
+
+                        Spacer(minLength: 16)
+
+                        Button {
+                            showQuotaSheet = true
+                        } label: {
+                            VStack(alignment: .trailing, spacing: 6) {
+                                Text("\(cachedActiveVehicleCount) listings")
+                                    .font(.system(size: 11, weight: .regular))
+                                    .foregroundColor(Color.white.opacity(0.40))
+
+                                HStack(spacing: 5) {
+                                    Circle()
+                                        .fill(Color(hex: "#C5A455"))
+                                        .frame(width: 5, height: 5)
+                                    Text("PLATINUM")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .foregroundColor(Color(hex: "#C5A455"))
+                                        .kerning(1.2)
+                                }
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 4)
+                                .background(Color(hex: "#C5A455").opacity(0.08))
+                                .overlay {
+                                    Capsule()
+                                        .strokeBorder(Color(hex: "#C5A455").opacity(0.30), lineWidth: 0.5)
+                                }
+                                .clipShape(Capsule())
                             }
-                        } else {
-                            ProgressView()
-                                .controlSize(.small)
-                                .frame(width: 30, height: 30)
                         }
                     }
                 }
@@ -446,6 +509,8 @@ struct HomeSummaryView: View {
 
     private var brandFilterCard: some View {
         VStack(alignment: .leading, spacing: 0) {
+            Divider()
+                .overlay(Color.white.opacity(0.10))
             Button {
                 isBrandFilterExpanded.toggle()
                 if isBrandFilterExpanded {
@@ -458,53 +523,55 @@ struct HomeSummaryView: View {
                 }
             } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: "line.3.horizontal.decrease.circle.fill")
-                        .foregroundStyle(.blue)
-                        .font(.subheadline)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Brand Filter")
-                        .font(.headline)
-                            .foregroundStyle(.primary)
-                        if !selectedBrandFilters.isEmpty {
-                            Text("\(selectedBrandFilters.count) selected")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+                    Image(systemName: "line.3.horizontal.decrease")
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundColor(Color.white.opacity(0.40))
+                    Text("BRAND")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(Color.white.opacity(0.30))
+                        .kerning(1)
+                    Text("—")
+                        .foregroundColor(Color.white.opacity(0.18))
+                    Text(brandFilterSummaryLabel)
+                        .font(.system(size: 13))
+                        .foregroundColor(Color.white.opacity(0.74))
                     Spacer()
                     if !selectedBrandFilters.isEmpty {
                         Text("\(selectedBrandFilters.count)/5")
                             .font(.caption2.weight(.semibold))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(Color.blue.opacity(0.1))
-                            .foregroundStyle(.blue)
+                            .background(Color.white.opacity(0.10))
+                            .foregroundStyle(Color.white.opacity(0.48))
                             .clipShape(Capsule())
                     }
                     Image(systemName: isBrandFilterExpanded ? "chevron.up" : "chevron.down")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundColor(Color.white.opacity(0.32))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
+                .padding(.horizontal, 22)
+                .padding(.vertical, 12)
             }
             .buttonStyle(.plain)
+            Divider()
+                .overlay(Color.white.opacity(0.10))
 
             if isBrandFilterExpanded {
-                Divider()
-                    .padding(.top, 12)
-
                 InlineSearchBar(
                     text: $brandSearchText,
                     placeholder: "Year, make, model or VIN"
                 )
                 .padding(.top, 14)
+                .padding(.horizontal, 22)
 
                 if cachedBrandOptions.isEmpty, !brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text("No matching brands for that search.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.white.opacity(0.52))
                         .padding(.top, 12)
+                        .padding(.horizontal, 22)
                 }
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 78), spacing: 10)], spacing: 10) {
@@ -513,21 +580,20 @@ struct HomeSummaryView: View {
                     }
                 }
                 .padding(.top, 14)
+                .padding(.horizontal, 22)
 
                 if !selectedBrandFilters.isEmpty {
                     Button("Clear All Brands") {
                         selectedBrandFilters.removeAll()
                     }
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(Color.white.opacity(0.74))
                     .padding(.top, 14)
+                    .padding(.horizontal, 22)
                 }
             }
         }
-        .padding(20)
-        .background(Color(UIColor.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .shadow(color: Color.primary.opacity(0.08), radius: 10, x: 0, y: 5)
+        .background(Color.clear)
     }
 
     private func scheduleBrandFilterAutoCollapse() {
@@ -562,7 +628,7 @@ struct HomeSummaryView: View {
                             .frame(width: 28, height: 28)
                     }
                 }
-                .foregroundStyle(isSelected ? .white : .secondary)
+                .foregroundStyle(Color.white.opacity(isSelected ? 0.84 : 0.46))
 
                 Text(brandDisplayName(for: option.make))
                     .font(.caption2.weight(.semibold))
@@ -571,16 +637,16 @@ struct HomeSummaryView: View {
 
                 Text("\(option.count)")
                     .font(.caption2.weight(.medium))
-                    .foregroundStyle(isSelected ? .white.opacity(0.85) : .secondary)
+                    .foregroundStyle(Color.white.opacity(isSelected ? 0.62 : 0.36))
             }
-            .foregroundStyle(isSelected ? .white : .primary)
+            .foregroundStyle(Color.white.opacity(isSelected ? 0.80 : 0.72))
             .frame(maxWidth: .infinity, minHeight: 84)
             .padding(.horizontal, 8)
             .padding(.vertical, 8)
-            .background(isSelected ? Color.blue : Color(uiColor: .secondarySystemGroupedBackground))
+            .background(isSelected ? Color(hex: "#1A1A1A") : Color(hex: "#111111"))
             .overlay {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(isSelected ? Color.blue : Color.primary.opacity(0.08), lineWidth: 1)
+                    .stroke(isSelected ? Color.white.opacity(0.14) : Color.white.opacity(0.10), lineWidth: 0.5)
             }
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
@@ -607,9 +673,9 @@ struct HomeSummaryView: View {
     private func dateCard(_ card: DateCard) -> some View {
         let isExpanded = expandedDates.contains(card.date)
         let totalForDate = card.locations.reduce(0) { $0 + $1.count }
+        let displayDate = displayDateTitle(for: card.date)
 
         VStack(alignment: .leading, spacing: 0) {
-            // ── Collapsible header — tap to expand/collapse ───────────
             Button {
                 if isExpanded {
                     expandedDates.remove(card.date)
@@ -617,29 +683,39 @@ struct HomeSummaryView: View {
                     expandedDates.insert(card.date)
                 }
             } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "calendar")
-                        .foregroundColor(.accentColor)
-                        .font(.subheadline)
-                    Text(card.date)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                    Spacer()
-                    Text("\(totalForDate) total")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(displayDate)
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundColor(Color.white.opacity(0.84))
+
+                            Spacer()
+
+                            Text("\(totalForDate) vehicles")
+                                .font(.system(size: 12))
+                                .foregroundColor(Color.white.opacity(0.38))
+                                .monospacedDigit()
+                        }
+                    }
+
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundColor(Color.white.opacity(0.32))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
+                .padding(.horizontal, 16)
+                .padding(.top, 18)
+                .padding(.bottom, 10)
             }
             .buttonStyle(.plain)
 
-            // ── Expandable location rows ──────────────────────────────
             if isExpanded {
-                Divider().padding(.top, 12)
+                Divider()
+                    .overlay(Color.white.opacity(0.09))
+                    .padding(.horizontal, 16)
+                    .padding(.top, 2)
 
                 ForEach(card.locations) { locEntry in
                     VStack(alignment: .leading, spacing: 8) {
@@ -650,39 +726,39 @@ struct HomeSummaryView: View {
                             allowedBrands: selectedBrandFilters.isEmpty ? nil : Array(selectedBrandFilters).sorted(),
                             initialSearchText: activeHomeSearchText
                         )) {
-                            HStack(alignment: .top, spacing: 8) {
-                                Image(systemName: "mappin.and.ellipse")
-                                    .foregroundColor(.blue)
-                                    .font(.caption)
-                                    .padding(.top, 2)
+                            HStack(alignment: .center, spacing: 10) {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    HStack(spacing: 6) {
-                                        Text(
-                                            locEntry.headerTime.map {
-                                                "\(locEntry.location) - \($0)"
-                                            } ?? locEntry.location
-                                        )
-                                            .font(.headline)
-                                            .foregroundStyle(.primary)
-                                            .lineLimit(1)
-                                            .minimumScaleFactor(0.8)
-                                        Spacer(minLength: 0)
-                                        Text("\(locEntry.count) total")
-                                            .font(.subheadline)
-                                            .foregroundStyle(.secondary)
-                                            .fixedSize()
-                                    }
-
+                                    Text(locEntry.location)
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(Color.white.opacity(0.84))
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.8)
+                                    Text(
+                                        locEntry.headerTime.map { "Houston, TX · \($0)" }
+                                        ?? "Houston, TX"
+                                    )
+                                    .font(.system(size: 12))
+                                    .foregroundColor(Color.white.opacity(0.38))
                                 }
-                                Spacer()
+                                Spacer(minLength: 0)
+                                Text("\(locEntry.count)")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(Color(hex: "#C5A455").opacity(0.70))
+                                    .monospacedDigit()
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
+                            .padding(14)
+                            .background(Color(hex: "#C5A455").opacity(0.05))
                         }
                         .buttonStyle(.plain)
 
-                        VStack(spacing: 6) {
-                            ForEach(locEntry.makes, id: \.make) { makeEntry in
+                        Divider()
+                            .overlay(Color.white.opacity(0.10))
+                            .padding(.horizontal, 14)
+
+                        VStack(spacing: 0) {
+                            ForEach(Array(locEntry.makes.enumerated()), id: \.element.make) { index, makeEntry in
                                 NavigationLink(destination: FilteredAuctionListView(
                                     date: card.date,
                                     location: locEntry.location,
@@ -691,46 +767,66 @@ struct HomeSummaryView: View {
                                     initialSearchText: activeHomeSearchText
                                 )) {
                                     HStack(spacing: 8) {
-                                        if let asset = brandAssetName(for: makeEntry.make),
-                                           let img = UIImage(named: asset) {
-                                            Image(uiImage: img)
-                                                .resizable()
-                                                .scaledToFit()
-                                                .frame(width: 20, height: 20)
-                                        } else {
-                                            Image(systemName: "car.fill")
-                                                .frame(width: 20, height: 20)
-                                                .foregroundStyle(.secondary)
-                                        }
+                                        Circle()
+                                            .fill(Color(hex: "#1A1A1A"))
+                                            .frame(width: 32, height: 32)
+                                            .overlay {
+                                                Group {
+                                                    if let asset = brandAssetName(for: makeEntry.make),
+                                                       let img = UIImage(named: asset) {
+                                                        Image(uiImage: img)
+                                                            .resizable()
+                                                            .aspectRatio(contentMode: .fit)
+                                                            .frame(width: 22, height: 22)
+                                                            .saturation(0.35)
+                                                            .brightness(-0.05)
+                                                            .blendMode(.screen)
+                                                    } else {
+                                                        Image(systemName: "car.fill")
+                                                            .frame(width: 22, height: 22)
+                                                            .foregroundStyle(Color.white.opacity(0.42))
+                                                    }
+                                                }
+                                            }
+                                            .overlay {
+                                                Circle()
+                                                    .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
+                                            }
                                         Text(brandDisplayName(for: makeEntry.make))
-                                            .font(.subheadline.weight(.semibold))
-                                            .foregroundStyle(.primary)
+                                            .font(.system(size: 14.5, weight: .regular))
+                                            .foregroundColor(Color.white.opacity(0.82))
                                         Spacer()
                                         HStack(spacing: 4) {
                                             Text("\(makeEntry.count)")
-                                                .font(.subheadline.weight(.semibold))
-                                                .foregroundStyle(.secondary)
+                                                .font(.system(size: 13, weight: .regular))
+                                                .foregroundColor(Color.white.opacity(0.40))
+                                                .monospacedDigit()
                                             Image(systemName: "chevron.right")
-                                                .font(.caption2.bold())
-                                                .foregroundStyle(.tertiary)
+                                                .font(.system(size: 10, weight: .regular))
+                                                .foregroundStyle(Color.white.opacity(0.24))
                                         }
                                     }
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .contentShape(Rectangle())
-                                    .padding(.leading, 4)
+                                    .padding(.vertical, 8)
+                                    .padding(.horizontal, 14)
                                 }
                                 .buttonStyle(.plain)
+                                if index < locEntry.makes.count - 1 {
+                                    Divider()
+                                        .padding(.leading, 52)
+                                        .overlay(Color.white.opacity(0.08))
+                                }
                             }
                         }
-                        .padding(.top, 4)
                     }
-                    .padding(16)
-                    .background(Color(uiColor: .tertiarySystemGroupedBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .background(Color(hex: "#111111"))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(Color.primary.opacity(0.05), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5)
                     }
+                    .padding(.horizontal, 16)
                     .padding(.top, 12)
 
                     if locEntry.id != card.locations.last?.id {
@@ -740,10 +836,7 @@ struct HomeSummaryView: View {
                 }
             }
         }
-        .padding(20)
-        .background(Color(UIColor.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .shadow(color: Color.primary.opacity(0.1), radius: 10, x: 0, y: 5)
+        .padding(.bottom, 8)
     }
 
     // MARK: - Empty state
@@ -752,12 +845,13 @@ struct HomeSummaryView: View {
         VStack(spacing: 16) {
             Image(systemName: "car.2.fill")
                 .font(.system(size: 48))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.white.opacity(0.28))
             Text("No Data Available")
                 .font(.headline)
+                .foregroundStyle(Color.white.opacity(0.80))
             Text("Fetch auction data from the HPD tab to populate the dashboard.")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.white.opacity(0.52))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
         }
@@ -767,12 +861,13 @@ struct HomeSummaryView: View {
         VStack(spacing: 16) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 42))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.white.opacity(0.28))
             Text("No Results")
                 .font(.headline)
+                .foregroundStyle(Color.white.opacity(0.80))
             Text("No vehicles match \"\(activeHomeSearchText)\".")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.white.opacity(0.52))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
             Button("Clear Search") {
@@ -780,6 +875,7 @@ struct HomeSummaryView: View {
                 isBrandFilterExpanded = true
             }
             .font(.subheadline.weight(.semibold))
+            .foregroundStyle(Color.white.opacity(0.74))
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 40)

@@ -7,6 +7,30 @@
 import SwiftUI
 import Supabase
 
+private extension Color {
+    init(hex: String) {
+        let cleaned = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var value: UInt64 = 0
+        Scanner(string: cleaned).scanHexInt64(&value)
+
+        let r, g, b: UInt64
+        switch cleaned.count {
+        case 6:
+            (r, g, b) = ((value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff)
+        default:
+            (r, g, b) = (0x1a, 0x6e, 0xf5)
+        }
+
+        self.init(
+            .sRGB,
+            red: Double(r) / 255,
+            green: Double(g) / 255,
+            blue: Double(b) / 255,
+            opacity: 1
+        )
+    }
+}
+
 extension Bundle {
     var appVersion: String { (infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.0" }
     var buildNumber: String { (infoDictionary?["CFBundleVersion"] as? String) ?? "1" }
@@ -53,6 +77,26 @@ extension View {
 
 struct ContentView: View {
     private let defaultHPDURLString = "https://www.houstontx.gov/police/auto_dealers_detail/Vehicles_Scheduled_For_Auction.htm"
+
+    init() {
+        let appearance = UITabBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = UIColor(red: 13 / 255, green: 13 / 255, blue: 13 / 255, alpha: 1)
+        appearance.shadowColor = UIColor(white: 1, alpha: 0.07)
+
+        let normalColor = UIColor(white: 1, alpha: 0.28)
+        let selectedColor = UIColor(red: 197 / 255, green: 164 / 255, blue: 85 / 255, alpha: 1)
+
+        for layout in [appearance.stackedLayoutAppearance, appearance.inlineLayoutAppearance, appearance.compactInlineLayoutAppearance] {
+            layout.normal.iconColor = normalColor
+            layout.normal.titleTextAttributes = [.foregroundColor: normalColor]
+            layout.selected.iconColor = selectedColor
+            layout.selected.titleTextAttributes = [.foregroundColor: selectedColor]
+        }
+
+        UITabBar.appearance().standardAppearance = appearance
+        UITabBar.appearance().scrollEdgeAppearance = appearance
+    }
 
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var carfaxVault = CarfaxVault.shared
@@ -103,29 +147,55 @@ struct ContentView: View {
             } else if isAuthenticated {
                 TabView(selection: $selectedTab) {
                     HomeSummaryView(selectedTab: $selectedTab, targetLocationFilter: $crossTabLocationFilter)
-                        .tabItem { Label("HOME", systemImage: "car.circle.fill") }
+                        .tabItem {
+                            VStack(spacing: 2) {
+                                Image(systemName: selectedTab == homeTab ? "house.fill" : "house")
+                                Text("Home")
+                            }
+                        }
                         .tag(homeTab)
                     // Temporarily hidden from the app UI, but kept in code for later reuse.
                     // HPDView(externalLocationFilter: $crossTabLocationFilter)
                     //     .tabItem { Label("HPD AUCTION", systemImage: "car.fill") }
                     //     .tag(1)
                     HPDView(favoritesOnly: true, externalLocationFilter: .constant(nil))
-                        .tabItem { Label("FAVORITES", systemImage: "star.fill") }
+                        .tabItem {
+                            VStack(spacing: 2) {
+                                Image(systemName: selectedTab == favoritesTab ? "heart.fill" : "heart")
+                                Text("Favorites")
+                            }
+                        }
                         .tag(favoritesTab)
                     if !carfaxVault.savedReports.isEmpty {
                         CarfaxVaultView()
-                            .tabItem { Label("MY REPORTS", systemImage: "doc.text.fill") }
+                            .tabItem {
+                                VStack(spacing: 2) {
+                                    Image(systemName: selectedTab == reportsTab ? "doc.text.fill" : "doc.text")
+                                    Text("Carfax")
+                                }
+                            }
                             .tag(reportsTab)
                     }
                     if userRole == "super_admin" {
                         AdminCarfaxLookupView()
-                            .tabItem { Label("VIN CARFAX", systemImage: "key.horizontal.fill") }
+                            .tabItem {
+                                VStack(spacing: 2) {
+                                    Image(systemName: selectedTab == adminCarfaxTab ? "doc.text.fill" : "doc.text")
+                                    Text("Carfax")
+                                }
+                            }
                             .tag(adminCarfaxTab)
                     }
                     HPDSettingsView()
-                        .tabItem { Label("SETTINGS", systemImage: "gearshape.fill") }
+                        .tabItem {
+                            VStack(spacing: 2) {
+                                Image(systemName: selectedTab == settingsTab ? "gearshape.fill" : "gearshape")
+                                Text("Settings")
+                            }
+                        }
                         .tag(settingsTab)
                 }
+                .tint(Color(hex: "#C5A455"))
             } else {
                 LoginView()
             }

@@ -9,6 +9,18 @@ import MapKit
 import Supabase
 import StoreKit
 
+private extension Color {
+    init(hex: String) {
+        let cleaned = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var value: UInt64 = 0
+        Scanner(string: cleaned).scanHexInt64(&value)
+        let r = Double((value >> 16) & 0xFF) / 255
+        let g = Double((value >> 8) & 0xFF) / 255
+        let b = Double(value & 0xFF) / 255
+        self.init(red: r, green: g, blue: b)
+    }
+}
+
 
 struct SafariView: View {
     let url: URL
@@ -1571,6 +1583,19 @@ struct HPDView: View {
         return favoriteLocationLabel(for: entry)
     }
 
+    private func favoritesDisplayDateTitle(for rawDate: String) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM/dd/yyyy"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+
+        guard let date = formatter.date(from: rawDate) else { return rawDate }
+
+        let displayFormatter = DateFormatter()
+        displayFormatter.dateFormat = "MMMM d, yyyy"
+        displayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        return displayFormatter.string(from: date)
+    }
+
     private var favoriteLocationSelectionSummary: String {
         let selected = selectedFavoriteLocationFilters
         if selected.isEmpty {
@@ -2190,10 +2215,10 @@ struct HPDView: View {
         }
 
         return UnevenRoundedRectangle(cornerRadii: radii, style: .continuous)
-            .fill(Color(uiColor: .secondarySystemGroupedBackground))
+            .fill(Color(hex: "#111111"))
             .overlay(
                 UnevenRoundedRectangle(cornerRadii: radii, style: .continuous)
-                    .stroke(Color.black.opacity(strokeOpacity), lineWidth: 1)
+                    .stroke(Color.white.opacity(strokeOpacity == 0 ? 0.08 : 0.10), lineWidth: 0.5)
             )
     }
 
@@ -2207,14 +2232,6 @@ struct HPDView: View {
             isFavoritesContext: true,
             initiallyExpanded: true
         )
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(Color(uiColor: .tertiarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.black.opacity(0.04), lineWidth: 1)
-        )
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) {
                 removeFavorite(entry)
@@ -2222,12 +2239,11 @@ struct HPDView: View {
                 Label("Remove", systemImage: "trash")
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.top, isFirstInLocation ? 4 : 8)
+        .padding(.top, isFirstInLocation ? 6 : 8)
         .padding(.bottom, isLastInLocation ? 14 : 10)
-        .listRowInsets(EdgeInsets(top: 0, leading: 10, bottom: 0, trailing: 10))
+        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
         .listRowSeparator(.hidden)
-        .listRowBackground(favoriteGroupBackground(isLastInLocation ? .footer : .item))
+        .listRowBackground(Color.clear)
     }
 
     @ViewBuilder
@@ -2246,47 +2262,56 @@ struct HPDView: View {
                 selectedAddressForMap = address
                 showMapAlert = true
             } label: {
-                Image("applemaps")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 20, height: 20)
-                    .opacity(0.9)
+                ZStack {
+                    Circle()
+                        .fill(Color(hex: "#1A1A1A"))
+                        .frame(width: 34, height: 34)
+                    Image("applemaps")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 18, height: 18)
+                        .opacity(0.92)
+                }
+                .overlay {
+                    Circle()
+                        .stroke(Color.white.opacity(0.10), lineWidth: 0.5)
+                }
             }
             .buttonStyle(.plain)
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
-                    Text(title.capitalized)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
+                    Text(title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.84))
                         .lineLimit(1)
                         .minimumScaleFactor(0.78)
                         .allowsTightening(true)
                         .layoutPriority(1)
-
-                    Text("(\(totalVehicles))")
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                        .fixedSize()
                 }
 
                 HStack(spacing: 6) {
-                    Text(shortAddress.capitalized)
+                    Text(shortAddress)
                     if let formattedTime, !formattedTime.isEmpty {
                         Text("•")
                         Text(formattedTime)
                     }
                 }
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(Color.white.opacity(0.38))
                 .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
 
+            Text("\(totalVehicles)")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color(hex: "#C5A455").opacity(0.70))
+                .monospacedDigit()
+
             Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                .font(.caption.bold())
-                .foregroundStyle(.secondary)
+                .font(.system(size: 10, weight: .regular))
+                .foregroundStyle(Color.white.opacity(0.32))
                 .fixedSize()
         }
         .contentShape(Rectangle())
@@ -2296,11 +2321,15 @@ struct HPDView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(Color(hex: "#C5A455").opacity(0.05))
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .listRowInsets(EdgeInsets(top: 18, leading: 10, bottom: 0, trailing: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.10), lineWidth: 0.5)
+        }
+        .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 0, trailing: 16))
         .listRowSeparator(.hidden)
-        .listRowBackground(favoriteGroupBackground(.header))
+        .listRowBackground(Color.clear)
     }
 
     @ViewBuilder
@@ -2462,7 +2491,7 @@ struct HPDView: View {
         }
 
         ZStack {
-            Color(UIColor.systemGroupedBackground).ignoresSafeArea()
+            Color(hex: "#0A0A0A").ignoresSafeArea()
             VStack(alignment: .leading, spacing: 0) {
                 if cachedFilteredEntries.isEmpty && !isLoading {
                     ContentUnavailableView {
@@ -2520,17 +2549,26 @@ struct HPDView: View {
                                     }
                                 }
                             } header: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "calendar")
-                                        .foregroundColor(.accentColor)
-                                        .font(.caption)
-                                    Text(dateGroup.date)
-                                        .font(.headline)
-                                        .foregroundStyle(.primary)
-                                        .lineLimit(1)
-                                        .minimumScaleFactor(0.9)
+                                HStack(alignment: .top, spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(favoritesDisplayDateTitle(for: dateGroup.date))
+                                            .font(.system(size: 15, weight: .medium))
+                                            .foregroundStyle(Color.white.opacity(0.84))
+                                            .lineLimit(1)
+                                            .minimumScaleFactor(0.92)
+                                    }
+
                                     Spacer()
+
+                                    Text("\(dateGroup.locations.reduce(0) { $0 + $1.vehicles.count }) vehicles")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(Color.white.opacity(0.38))
+                                        .monospacedDigit()
                                 }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 16)
+                                .padding(.top, 18)
+                                .padding(.bottom, 10)
                             }
                         }
                     }
@@ -2566,16 +2604,17 @@ struct HPDView: View {
                 }
             } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: "mappin.and.ellipse")
-                        .foregroundStyle(.blue)
-                        .font(.title3)
+                    Image(systemName: "line.3.horizontal.decrease")
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundStyle(Color.white.opacity(0.28))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Locations")
-                            .font(.headline.weight(.semibold))
-                            .foregroundStyle(.primary)
+                        Text("LOCATIONS")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color.white.opacity(0.20))
+                            .kerning(1)
                         Text(favoriteLocationSelectionSummary)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color.white.opacity(0.60))
                     }
                     Spacer()
                     if !selectedFavoriteLocationFilters.isEmpty {
@@ -2583,13 +2622,13 @@ struct HPDView: View {
                             .font(.caption.bold())
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(Color.blue.opacity(0.1))
-                            .foregroundStyle(.blue)
+                            .background(Color.white.opacity(0.10))
+                            .foregroundStyle(Color.white.opacity(0.58))
                             .clipShape(Capsule())
                     }
                     Image(systemName: isFavoriteLocationFilterExpanded ? "chevron.up" : "chevron.down")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundStyle(Color.white.opacity(0.20))
                 }
             }
             .buttonStyle(.plain)
@@ -2616,15 +2655,19 @@ struct HPDView: View {
                         selectedFavoriteLocationFilters.removeAll()
                     }
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(Color.white.opacity(0.62))
                     .padding(.top, 14)
                 }
             }
         }
-        .padding(20)
-        .background(Color(UIColor.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .shadow(color: Color.primary.opacity(0.08), radius: 10, x: 0, y: 5)
+        .padding(.horizontal, 22)
+        .padding(.vertical, 12)
+        .background(Color(hex: "#111111"))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.10), lineWidth: 0.5)
+        }
     }
 
     private func scheduleFavoriteLocationAutoCollapse() {
@@ -2652,30 +2695,32 @@ struct HPDView: View {
                 HStack(spacing: 8) {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                         .font(.subheadline)
+                        .foregroundStyle(Color.white.opacity(isSelected ? 0.70 : 0.30))
                     Text(title.capitalized)
                         .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.82))
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     Text("\(count)")
                         .font(.caption.bold())
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background((isSelected ? Color.white : Color.blue).opacity(isSelected ? 0.18 : 0.10))
+                        .background(Color.white.opacity(isSelected ? 0.16 : 0.08))
                         .clipShape(Capsule())
                 }
 
                 Text(address.capitalized)
                     .font(.caption)
-                    .foregroundStyle(isSelected ? .white.opacity(0.88) : .secondary)
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.88) : Color.white.opacity(0.42))
                     .lineLimit(1)
             }
-            .foregroundStyle(isSelected ? .white : .primary)
+            .foregroundStyle(Color.white.opacity(isSelected ? 0.88 : 0.82))
             .frame(maxWidth: .infinity, minHeight: 70, alignment: .topLeading)
             .padding(14)
-            .background(isSelected ? Color.blue : Color(uiColor: .secondarySystemGroupedBackground))
+            .background(isSelected ? Color(hex: "#1A1A1A") : Color(hex: "#111111"))
             .overlay {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(isSelected ? Color.blue : Color.primary.opacity(0.08), lineWidth: 1)
+                    .stroke(isSelected ? Color.white.opacity(0.14) : Color.white.opacity(0.10), lineWidth: 0.5)
             }
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }

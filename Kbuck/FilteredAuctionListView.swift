@@ -156,6 +156,7 @@ struct FilteredAuctionListView: View {
                             entry: entry,
                             showAddress: false,
                             showQuickInventory: false,
+                            showBrandLogo: false,
                             shouldLoadVINCacheOnAppear: false,
                             initiallyExpanded: true
                         )
@@ -168,7 +169,7 @@ struct FilteredAuctionListView: View {
             }
         }
         .searchable(text: $searchText, prompt: "Search VIN, Year, Brand or Model")
-        .navigationTitle("\(baseTitle) (\(displayedVehicles.count))")
+        .navigationTitle("\(baseTitle.uppercased()) (\(displayedVehicles.count))")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

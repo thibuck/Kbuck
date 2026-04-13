@@ -113,6 +113,9 @@ struct NHTSACacheUpdate: Codable, Sendable {
     let body_class: String?
     let city_mpg: String?
     let hwy_mpg: String?
+    let stat_vin_status: String?
+    let stat_vin_resolved_url: String?
+    let stat_vin_checked_at: String?
 
     var displayTrim: String { displayValue(for: trim) }
     var displayBodyClass: String { displayValue(for: body_class) }
@@ -139,7 +142,10 @@ struct NHTSACacheUpdate: Codable, Sendable {
         trim: String? = nil,
         bodyClass: String? = nil,
         cityMpg: String? = nil,
-        hwyMpg: String? = nil
+        hwyMpg: String? = nil,
+        statVinStatus: String? = nil,
+        statVinResolvedURL: String? = nil,
+        statVinCheckedAt: String? = nil
     ) {
         self.vin = vin
         self.year = year
@@ -154,6 +160,9 @@ struct NHTSACacheUpdate: Codable, Sendable {
         self.body_class = bodyClass?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.city_mpg = cityMpg?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.hwy_mpg = hwyMpg?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.stat_vin_status = statVinStatus?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.stat_vin_resolved_url = statVinResolvedURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.stat_vin_checked_at = statVinCheckedAt?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     nonisolated func encode(to encoder: Encoder) throws {
@@ -171,6 +180,9 @@ struct NHTSACacheUpdate: Codable, Sendable {
         try container.encodeIfPresent(body_class, forKey: .body_class)
         try container.encodeIfPresent(city_mpg, forKey: .city_mpg)
         try container.encodeIfPresent(hwy_mpg, forKey: .hwy_mpg)
+        try container.encodeIfPresent(stat_vin_status, forKey: .stat_vin_status)
+        try container.encodeIfPresent(stat_vin_resolved_url, forKey: .stat_vin_resolved_url)
+        try container.encodeIfPresent(stat_vin_checked_at, forKey: .stat_vin_checked_at)
     }
 }
 
