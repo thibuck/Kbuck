@@ -2215,10 +2215,10 @@ struct HPDView: View {
         }
 
         return UnevenRoundedRectangle(cornerRadii: radii, style: .continuous)
-            .fill(Color(hex: "#111111"))
+            .fill(Color(.secondarySystemBackground))
             .overlay(
                 UnevenRoundedRectangle(cornerRadii: radii, style: .continuous)
-                    .stroke(Color.white.opacity(strokeOpacity == 0 ? 0.08 : 0.10), lineWidth: 0.5)
+                    .stroke(Color.primary.opacity(strokeOpacity == 0 ? 0.08 : 0.10), lineWidth: 0.5)
             )
     }
 
@@ -2264,7 +2264,7 @@ struct HPDView: View {
             } label: {
                 ZStack {
                     Circle()
-                        .fill(Color(hex: "#1A1A1A"))
+                        .fill(Color(.tertiarySystemBackground))
                         .frame(width: 34, height: 34)
                     Image("applemaps")
                         .resizable()
@@ -2274,7 +2274,7 @@ struct HPDView: View {
                 }
                 .overlay {
                     Circle()
-                        .stroke(Color.white.opacity(0.10), lineWidth: 0.5)
+                        .stroke(Color.primary.opacity(0.10), lineWidth: 0.5)
                 }
             }
             .buttonStyle(.plain)
@@ -2283,7 +2283,7 @@ struct HPDView: View {
                 HStack(spacing: 8) {
                     Text(title)
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.white.opacity(0.84))
+                        .foregroundStyle(Color.primary.opacity(0.84))
                         .lineLimit(1)
                         .minimumScaleFactor(0.78)
                         .allowsTightening(true)
@@ -2298,7 +2298,7 @@ struct HPDView: View {
                     }
                 }
                 .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(Color.white.opacity(0.38))
+                .foregroundStyle(Color.primary.opacity(0.38))
                 .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -2311,7 +2311,7 @@ struct HPDView: View {
 
             Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                 .font(.system(size: 10, weight: .regular))
-                .foregroundStyle(Color.white.opacity(0.32))
+                .foregroundStyle(Color.primary.opacity(0.32))
                 .fixedSize()
         }
         .contentShape(Rectangle())
@@ -2325,7 +2325,7 @@ struct HPDView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.10), lineWidth: 0.5)
+                .stroke(Color.primary.opacity(0.10), lineWidth: 0.5)
         }
         .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 0, trailing: 16))
         .listRowSeparator(.hidden)
@@ -2491,7 +2491,7 @@ struct HPDView: View {
         }
 
         ZStack {
-            Color(hex: "#0A0A0A").ignoresSafeArea()
+            Color(.systemBackground).ignoresSafeArea()
             VStack(alignment: .leading, spacing: 0) {
                 if cachedFilteredEntries.isEmpty && !isLoading {
                     ContentUnavailableView {
@@ -2507,7 +2507,7 @@ struct HPDView: View {
                     List {
                         if !favoriteLocationOptions.isEmpty {
                             favoriteLocationFilterCard
-                                .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 8, trailing: 16))
+                                .listRowInsets(EdgeInsets())
                                 .listRowSeparator(.hidden)
                                 .listRowBackground(Color.clear)
                         }
@@ -2549,26 +2549,33 @@ struct HPDView: View {
                                     }
                                 }
                             } header: {
-                                HStack(alignment: .top, spacing: 12) {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(favoritesDisplayDateTitle(for: dateGroup.date))
-                                            .font(.system(size: 15, weight: .medium))
-                                            .foregroundStyle(Color.white.opacity(0.84))
-                                            .lineLimit(1)
-                                            .minimumScaleFactor(0.92)
+                                VStack(spacing: 0) {
+                                    HStack(alignment: .top, spacing: 12) {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(favoritesDisplayDateTitle(for: dateGroup.date))
+                                                .font(.system(size: 15, weight: .medium))
+                                                .foregroundStyle(Color.primary.opacity(0.84))
+                                                .lineLimit(1)
+                                                .minimumScaleFactor(0.92)
+                                        }
+
+                                        Spacer()
+
+                                        Text("\(dateGroup.locations.reduce(0) { $0 + $1.vehicles.count }) vehicles")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(Color.primary.opacity(0.38))
+                                            .monospacedDigit()
                                     }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 16)
+                                    .padding(.top, 18)
+                                    .padding(.bottom, 10)
 
-                                    Spacer()
-
-                                    Text("\(dateGroup.locations.reduce(0) { $0 + $1.vehicles.count }) vehicles")
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(Color.white.opacity(0.38))
-                                        .monospacedDigit()
+                                    Divider()
+                                        .overlay(Color.primary.opacity(0.09))
+                                        .padding(.horizontal, 16)
+                                        .padding(.top, 2)
                                 }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 16)
-                                .padding(.top, 18)
-                                .padding(.bottom, 10)
                             }
                         }
                     }
@@ -2595,6 +2602,8 @@ struct HPDView: View {
 
     private var favoriteLocationFilterCard: some View {
         VStack(alignment: .leading, spacing: 0) {
+            Divider()
+                .overlay(Color.primary.opacity(0.10))
             Button {
                 isFavoriteLocationFilterExpanded.toggle()
                 if isFavoriteLocationFilterExpanded {
@@ -2606,68 +2615,75 @@ struct HPDView: View {
                 HStack(spacing: 10) {
                     Image(systemName: "line.3.horizontal.decrease")
                         .font(.system(size: 12, weight: .regular))
-                        .foregroundStyle(Color.white.opacity(0.28))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("LOCATIONS")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Color.white.opacity(0.20))
-                            .kerning(1)
-                        Text(favoriteLocationSelectionSummary)
-                            .font(.system(size: 13))
-                            .foregroundStyle(Color.white.opacity(0.60))
-                    }
+                        .foregroundColor(Color.primary.opacity(0.40))
+                    Text("LOCATION")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(Color.primary.opacity(0.30))
+                        .kerning(1)
+                    Text("—")
+                        .foregroundColor(Color.primary.opacity(0.18))
+                    Text(favoriteLocationSelectionSummary)
+                        .font(.system(size: 13))
+                        .foregroundColor(Color.primary.opacity(0.74))
                     Spacer()
                     if !selectedFavoriteLocationFilters.isEmpty {
                         Text("\(selectedFavoriteLocationFilters.count)")
-                            .font(.caption.bold())
+                            .font(.caption2.weight(.semibold))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(Color.white.opacity(0.10))
-                            .foregroundStyle(Color.white.opacity(0.58))
+                            .background(Color.primary.opacity(0.10))
+                            .foregroundStyle(Color.primary.opacity(0.48))
                             .clipShape(Capsule())
                     }
                     Image(systemName: isFavoriteLocationFilterExpanded ? "chevron.up" : "chevron.down")
                         .font(.system(size: 10, weight: .regular))
-                        .foregroundStyle(Color.white.opacity(0.20))
+                        .foregroundColor(Color.primary.opacity(0.32))
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .padding(.horizontal, 22)
+                .padding(.vertical, 12)
             }
             .buttonStyle(.plain)
+            Divider()
+                .overlay(Color.primary.opacity(0.10))
 
             if isFavoriteLocationFilterExpanded {
-                Divider()
-                    .padding(.top, 12)
-
                 SearchBar(
                     text: $favoriteLocationSearchText,
                     placeholder: "VIN, make, model or year"
                 )
                 .padding(.top, 14)
+                .padding(.horizontal, 22)
 
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 78), spacing: 10)], spacing: 10) {
                     ForEach(filteredFavoriteLocationOptions, id: \.address) { option in
                         favoriteLocationFilterChip(title: option.title, address: option.address, count: option.count)
                     }
                 }
                 .padding(.top, 14)
+                .padding(.horizontal, 22)
+
+                if filteredFavoriteLocationOptions.isEmpty, !favoriteLocationSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("No matching locations for that search.")
+                        .font(.caption)
+                        .foregroundStyle(Color.primary.opacity(0.52))
+                        .padding(.top, 12)
+                        .padding(.horizontal, 22)
+                }
 
                 if !selectedFavoriteLocationFilters.isEmpty {
                     Button("Clear All Locations") {
                         selectedFavoriteLocationFilters.removeAll()
                     }
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.white.opacity(0.62))
+                    .foregroundStyle(Color.primary.opacity(0.74))
                     .padding(.top, 14)
+                    .padding(.horizontal, 22)
                 }
             }
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 12)
-        .background(Color(hex: "#111111"))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.white.opacity(0.10), lineWidth: 0.5)
-        }
+        .background(Color.clear)
     }
 
     private func scheduleFavoriteLocationAutoCollapse() {
@@ -2691,36 +2707,29 @@ struct HPDView: View {
                 selectedFavoriteLocationFilters.insert(address)
             }
         } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.white.opacity(isSelected ? 0.70 : 0.30))
-                    Text(title.capitalized)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color.white.opacity(0.82))
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    Text("\(count)")
-                        .font(.caption.bold())
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.white.opacity(isSelected ? 0.16 : 0.08))
-                        .clipShape(Capsule())
-                }
+            VStack(spacing: 6) {
+                Image(systemName: isSelected ? "location.fill" : "location")
+                    .font(.title3)
+                    .frame(width: 28, height: 28)
+                    .foregroundStyle(Color.primary.opacity(isSelected ? 0.84 : 0.46))
 
-                Text(address.capitalized)
-                    .font(.caption)
-                    .foregroundStyle(isSelected ? Color.white.opacity(0.88) : Color.white.opacity(0.42))
+                Text(title.capitalized)
+                    .font(.caption2.weight(.semibold))
                     .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+
+                Text("\(count)")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(Color.primary.opacity(isSelected ? 0.62 : 0.36))
             }
-            .foregroundStyle(Color.white.opacity(isSelected ? 0.88 : 0.82))
-            .frame(maxWidth: .infinity, minHeight: 70, alignment: .topLeading)
-            .padding(14)
-            .background(isSelected ? Color(hex: "#1A1A1A") : Color(hex: "#111111"))
+            .foregroundStyle(Color.primary.opacity(isSelected ? 0.80 : 0.72))
+            .frame(maxWidth: .infinity, minHeight: 84)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 8)
+            .background(isSelected ? Color(.tertiarySystemBackground) : Color(.secondarySystemBackground))
             .overlay {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(isSelected ? Color.white.opacity(0.14) : Color.white.opacity(0.10), lineWidth: 0.5)
+                    .stroke(isSelected ? Color.primary.opacity(0.14) : Color.primary.opacity(0.10), lineWidth: 0.5)
             }
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }

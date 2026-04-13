@@ -80,11 +80,10 @@ struct ContentView: View {
 
     init() {
         let appearance = UITabBarAppearance()
-        appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = UIColor(red: 13 / 255, green: 13 / 255, blue: 13 / 255, alpha: 1)
-        appearance.shadowColor = UIColor(white: 1, alpha: 0.07)
+        appearance.configureWithDefaultBackground()
+        appearance.shadowColor = UIColor.separator
 
-        let normalColor = UIColor(white: 1, alpha: 0.28)
+        let normalColor = UIColor.secondaryLabel
         let selectedColor = UIColor(red: 197 / 255, green: 164 / 255, blue: 85 / 255, alpha: 1)
 
         for layout in [appearance.stackedLayoutAppearance, appearance.inlineLayoutAppearance, appearance.compactInlineLayoutAppearance] {
@@ -171,7 +170,7 @@ struct ContentView: View {
                             .tabItem {
                                 VStack(spacing: 2) {
                                     Image(systemName: selectedTab == reportsTab ? "doc.text.fill" : "doc.text")
-                                    Text("Carfax")
+                                    Text("Reports")
                                 }
                             }
                             .tag(reportsTab)

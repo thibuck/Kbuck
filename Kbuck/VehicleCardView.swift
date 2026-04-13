@@ -224,12 +224,12 @@ struct VehicleCardView: View {
     private var hasSavedCarfaxReport: Bool {
         carfaxVault.getReportURL(for: entry.vin) != nil
     }
-    private var cardSurfaceColor: Color { Color(hex: "#111111") }
-    private var cardElevatedColor: Color { Color(hex: "#1A1A1A") }
-    private var cardBorderColor: Color { Color.white.opacity(0.10) }
-    private var cardPrimaryTextColor: Color { Color.white.opacity(0.82) }
-    private var cardSecondaryTextColor: Color { Color.white.opacity(0.44) }
-    private var neutralActionTint: Color { Color.white.opacity(0.18) }
+    private var cardSurfaceColor: Color { Color(.systemBackground) }
+    private var cardElevatedColor: Color { Color(.tertiarySystemBackground) }
+    private var cardBorderColor: Color { Color.primary.opacity(0.10) }
+    private var cardPrimaryTextColor: Color { Color.primary.opacity(0.82) }
+    private var cardSecondaryTextColor: Color { Color.primary.opacity(0.44) }
+    private var neutralActionTint: Color { Color.primary.opacity(0.18) }
     private var primaryActionTint: Color { Color(hex: "#C5A455").opacity(0.52) }
 
     private var shareText: String {
@@ -392,7 +392,7 @@ struct VehicleCardView: View {
             // ── Expanded content ───────────────────────────────────────────
             if isExpanded {
                 Divider()
-                    .overlay(Color.white.opacity(0.07))
+                    .overlay(Color.primary.opacity(0.07))
 
                 // VIN row — tap to copy
                 Group {
@@ -693,10 +693,10 @@ struct VehicleCardView: View {
         .font(.system(.subheadline))
         .foregroundStyle(cardPrimaryTextColor)
         .padding(16)
-        .background(isFavoritesContext ? Color.clear : cardSurfaceColor)
-        .clipShape(RoundedRectangle(cornerRadius: isFavoritesContext ? 0 : 16, style: .continuous))
+        .background(cardSurfaceColor)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: isFavoritesContext ? 0 : 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(processed ? primaryActionTint.opacity(0.6) : cardBorderColor, lineWidth: 0.5)
         )
         .shadow(color: .black.opacity(isFavoritesContext ? 0 : 0.24), radius: isFavoritesContext ? 0 : 12, x: 0, y: 6)
