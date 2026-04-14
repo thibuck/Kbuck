@@ -29,6 +29,11 @@ private extension Color {
 private struct InlineSearchBar: View {
     @Binding var text: String
     let placeholder: String
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var searchBarBackground: Color {
+        colorScheme == .light ? Color.white.opacity(0.72) : Color(.systemGray6)
+    }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -50,7 +55,7 @@ private struct InlineSearchBar: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color(.systemGray6))
+        .background(searchBarBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
@@ -141,6 +146,24 @@ struct HomeSummaryView: View {
             return brandDisplayName(for: selected)
         }
         return "All brands"
+    }
+
+    private var homeLocationCardBackground: Color {
+        colorScheme == .light
+            ? Color.white.opacity(0.72)
+            : Color(hex: "#C5A455").opacity(0.05)
+    }
+
+    private var homeBrandChipBackground: Color {
+        colorScheme == .light
+            ? Color.white.opacity(0.72)
+            : Color(.secondarySystemBackground)
+    }
+
+    private var homeBrandChipSelectedBackground: Color {
+        colorScheme == .light
+            ? Color.white.opacity(0.86)
+            : Color(.tertiarySystemBackground)
     }
 
     private func displayDateTitle(for rawDate: String) -> String {
@@ -398,7 +421,7 @@ struct HomeSummaryView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(.systemGroupedBackground).ignoresSafeArea()
+                AppChromeBackground()
                 if cachedGroupedSummaries.isEmpty && !hasBaseAuctionData {
                     emptyState
                 } else {
@@ -667,7 +690,7 @@ struct HomeSummaryView: View {
             .frame(maxWidth: .infinity, minHeight: 84)
             .padding(.horizontal, 8)
             .padding(.vertical, 8)
-            .background(isSelected ? Color(.tertiarySystemBackground) : Color(.secondarySystemBackground))
+            .background(isSelected ? homeBrandChipSelectedBackground : homeBrandChipBackground)
             .overlay {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(isSelected ? Color.primary.opacity(0.14) : Color.primary.opacity(0.10), lineWidth: 0.5)
@@ -736,11 +759,6 @@ struct HomeSummaryView: View {
             .buttonStyle(.plain)
 
             if isExpanded {
-                Divider()
-                    .overlay(Color.primary.opacity(0.09))
-                    .padding(.horizontal, 16)
-                    .padding(.top, 2)
-
                 ForEach(card.locations) { locEntry in
                     let isLocationExpanded = locationIsExpanded(date: card.date, location: locEntry.location)
 
@@ -793,7 +811,8 @@ struct HomeSummaryView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(14)
-                        .background(Color(hex: "#C5A455").opacity(0.05))
+                        .background(homeLocationCardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
 
                         if isLocationExpanded {
                             Divider()

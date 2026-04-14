@@ -28,6 +28,7 @@ private struct AdminDetectedVehicle: Equatable {
 
 struct AdminCarfaxLookupView: View {
     @EnvironmentObject private var supabaseService: SupabaseService
+    @Environment(\.colorScheme) private var colorScheme
     @StateObject private var carfaxVault = CarfaxVault.shared
 
     @State private var vinInput: String = ""
@@ -55,18 +56,33 @@ struct AdminCarfaxLookupView: View {
         detectedVehicle?.vin == normalizedVINInput && normalizedVINInput.count == 17 && !isFetching
     }
 
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color.white.opacity(0.06) : Color.white.opacity(0.74)
+    }
+
+    private var softSurface: Color {
+        colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.72)
+    }
+
+    private var cardBorder: Color {
+        Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.08)
+    }
+
+    private var accentColor: Color {
+        Color(red: 197 / 255, green: 164 / 255, blue: 85 / 255)
+    }
+
+    private var lookupStateLabel: String {
+        if existingReportURL != nil { return "Saved report" }
+        if detectedVehicle != nil { return "Ready to request" }
+        if isResolvingVIN { return "Decoding" }
+        return "Awaiting VIN"
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
-                LinearGradient(
-                    colors: [
-                        Color(.systemBackground),
-                        Color(.secondarySystemBackground),
-                        Color(.systemBackground)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
+                AppChromeBackground()
                 .ignoresSafeArea()
 
                 ScrollView {
@@ -82,6 +98,7 @@ struct AdminCarfaxLookupView: View {
                     .padding(16)
                     .padding(.bottom, 28)
                 }
+                .background(Color.clear)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     isVINFieldFocused = false
@@ -167,46 +184,55 @@ struct AdminCarfaxLookupView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
+                    Text("CARFAX DESK")
+                        .font(.system(size: 10, weight: .semibold))
+                        .tracking(1.8)
+                        .foregroundStyle(Color.primary.opacity(0.34))
                     Text("VIN Carfax")
-                        .font(.system(size: 28, weight: .semibold, design: .rounded))
-                    Text("Decode first. Request after confirming.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.primary.opacity(0.92))
+                    Text("Decode the VIN, confirm the vehicle, then launch the report request flow.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.primary.opacity(0.56))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer()
 
                 Image(systemName: "doc.text.viewfinder")
-                    .font(.system(size: 26, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .padding(12)
+                .font(.system(size: 26, weight: .semibold))
+                    .foregroundStyle(accentColor)
+                    .padding(14)
                     .background(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(Color(.secondarySystemBackground))
+                            .fill(accentColor.opacity(colorScheme == .dark ? 0.14 : 0.10))
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
 
             HStack(spacing: 10) {
-                if isResolvingVIN {
-                    statusPill(title: "Detecting", systemImage: "waveform.path.ecg", tint: .blue)
-                }
+                statusPill(title: lookupStateLabel, systemImage: "waveform.path.ecg", tint: isResolvingVIN ? .blue : accentColor)
+                metricPill(title: "Vault", value: "\(carfaxVault.savedReports.count)")
             }
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(Color(.systemBackground))
+                .fill(cardBackground)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(Color(.separator).opacity(0.18), lineWidth: 1)
+                .stroke(cardBorder, lineWidth: 0.5)
         )
     }
 
     private var vinEntryCard: some View {
         VStack(alignment: .leading, spacing: 14) {
+            Text("VIN Input")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.primary.opacity(0.48))
+
             HStack(spacing: 12) {
                 Image(systemName: "number.square.fill")
                     .foregroundStyle(.secondary)
@@ -242,7 +268,7 @@ struct AdminCarfaxLookupView: View {
             .padding(.vertical, 14)
             .background(
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(Color(.secondarySystemBackground))
+                    .fill(softSurface)
             )
 
         }
@@ -250,11 +276,11 @@ struct AdminCarfaxLookupView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(Color(.systemBackground))
+                .fill(cardBackground)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(Color(.separator).opacity(0.18), lineWidth: 1)
+                .stroke(cardBorder, lineWidth: 0.5)
         )
     }
 
@@ -297,7 +323,7 @@ struct AdminCarfaxLookupView: View {
                         Spacer()
                         if isFetching {
                             ProgressView()
-                                .tint(.white)
+                                .tint(Color.black.opacity(0.75))
                         } else {
                             Image(systemName: "doc.badge.plus")
                         }
@@ -306,13 +332,9 @@ struct AdminCarfaxLookupView: View {
                         Spacer()
                     }
                     .padding(.vertical, 16)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.black.opacity(0.82))
                     .background(
-                        LinearGradient(
-                            colors: [Color.black, Color(red: 0.18, green: 0.22, blue: 0.29)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
+                        accentColor
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 }
@@ -324,11 +346,11 @@ struct AdminCarfaxLookupView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .fill(Color(.systemBackground))
+                    .fill(cardBackground)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .stroke(Color.blue.opacity(0.12), lineWidth: 1)
+                    .stroke(cardBorder, lineWidth: 0.5)
             )
         } else if normalizedVINInput.count == 17 {
             VStack(alignment: .leading, spacing: 12) {
@@ -350,7 +372,11 @@ struct AdminCarfaxLookupView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .fill(Color(.systemBackground))
+                    .fill(cardBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .stroke(cardBorder, lineWidth: 0.5)
             )
         }
     }
@@ -364,27 +390,36 @@ struct AdminCarfaxLookupView: View {
                 Button {
                     selectedReportURL = reportURL
                 } label: {
-                    Label("Open Report", systemImage: "safari")
+                    Label("Open", systemImage: "play.fill")
+                        .font(.headline)
                         .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .foregroundStyle(Color.black.opacity(0.82))
+                        .background(accentColor)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.plain)
 
                 ShareLink(item: reportURL) {
                     Label("Share", systemImage: "square.and.arrow.up")
+                        .font(.headline)
                         .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .foregroundStyle(Color.primary.opacity(0.78))
+                        .background(softSurface)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
-                .buttonStyle(.bordered)
             }
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(Color(.systemBackground))
+                .fill(cardBackground)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(Color(.separator).opacity(0.18), lineWidth: 1)
+                .stroke(cardBorder, lineWidth: 0.5)
         )
     }
 
@@ -397,8 +432,25 @@ struct AdminCarfaxLookupView: View {
         .foregroundStyle(tint)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(tint.opacity(0.12))
+        .background(tint.opacity(colorScheme == .dark ? 0.16 : 0.10))
         .clipShape(Capsule())
+    }
+
+    private func metricPill(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title.uppercased())
+                .font(.system(size: 9, weight: .semibold))
+                .tracking(1.2)
+                .foregroundStyle(Color.primary.opacity(0.34))
+
+            Text(value)
+                .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color.primary.opacity(0.82))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.primary.opacity(colorScheme == .dark ? 0.09 : 0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func resolveVehicleIfNeeded(force: Bool = false) async {

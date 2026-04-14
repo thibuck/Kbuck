@@ -47,7 +47,9 @@ struct VehicleCardView: View {
 
     @EnvironmentObject private var supabaseService: SupabaseService
     @EnvironmentObject private var storeManager: StoreManager
+    @Environment(\.colorScheme) private var colorScheme
     @AppStorage("userRole")         private var userRole: String = "user"
+    @AppStorage("skipBidDisclaimer") private var skipBidDisclaimer = false
     @StateObject private var carfaxVault = CarfaxVault.shared
 
     // MARK: Card state
@@ -115,12 +117,12 @@ struct VehicleCardView: View {
 
 
     // Extraction
-    @State private var showLegalDisclaimer      = false
     @State private var pendingExtractionEntry: HPDEntry? = nil
     @State private var showExtractionFlow       = false
     @State private var extractionErrorMessage: String? = nil
     @State private var showExtractionErrorAlert = false
     @State private var isQuotaExceededAlert     = false
+    @State private var shouldCheckBidCacheInFlow = true
 
     // MARK: - Derived
     private var cardKey: String   { normalizeVIN(entry.vin) }
@@ -194,6 +196,12 @@ struct VehicleCardView: View {
     }
     private var yearStr: String   { normalizedYear(entry.year) }
     private var processed: Bool   { lastProcessedVIN == cardKey }
+    private var hasCompleteBidData: Bool {
+        guard let odoInfo else { return false }
+        let odometer = odoInfo.odometer.trimmingCharacters(in: .whitespacesAndNewlines)
+        let privateValue = odoInfo.privateValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return !odometer.isEmpty && !privateValue.isEmpty
+    }
     private var currentServerDailyLimit: Int {
         supabaseService.currentServerDailyLimit
     }
@@ -239,8 +247,24 @@ struct VehicleCardView: View {
     private var hasSavedCarfaxReport: Bool {
         carfaxVault.getReportURL(for: entry.vin) != nil
     }
-    private var cardSurfaceColor: Color { Color(.systemBackground) }
-    private var cardElevatedColor: Color { Color(.tertiarySystemBackground) }
+    private var cardSurfaceColor: Color {
+        if isFavoritesContext && colorScheme == .light {
+            return Color.white.opacity(0.72)
+        }
+        return Color(.systemBackground)
+    }
+    private var cardElevatedColor: Color {
+        if isFavoritesContext && colorScheme == .light {
+            return Color.white.opacity(0.88)
+        }
+        return Color(.tertiarySystemBackground)
+    }
+    private var brandListCardBackgroundColor: Color {
+        if isFavoritesContext && colorScheme == .light {
+            return Color.white.opacity(0.74)
+        }
+        return Color(.secondarySystemBackground)
+    }
     private var cardBorderColor: Color { Color.primary.opacity(0.10) }
     private var cardPrimaryTextColor: Color { Color.primary.opacity(0.82) }
     private var cardSecondaryTextColor: Color { Color.primary.opacity(0.44) }
@@ -266,6 +290,17 @@ struct VehicleCardView: View {
 
     private var calendarEntryLabel: String {
         "\(yearStr) \(displayMake) \(displayModel) - \(entry.dateScheduled)"
+    }
+    private var calendarEntryDetails: String {
+        var lines = [calendarEntryLabel]
+        let address = entry.lotAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !address.isEmpty {
+            lines.append(address)
+        }
+        if let time = entry.time?.trimmingCharacters(in: .whitespacesAndNewlines), !time.isEmpty {
+            lines.append("Time: \(time)")
+        }
+        return lines.joined(separator: "\n")
     }
 
     private var brandListModelTrim: String {
@@ -372,27 +407,31 @@ struct VehicleCardView: View {
         }
 
         haptic(.medium)
-        pendingExtractionEntry = entry
-        showLegalDisclaimer = true
+        if skipBidDisclaimer {
+            startExtraction(for: entry)
+        } else {
+            shouldCheckBidCacheInFlow = true
+            pendingExtractionEntry = entry
+        }
+    }
+
+    private func startExtraction(for entry: HPDEntry) {
+        let sanitizedVIN = normalizeVIN(entry.vin)
+        supabaseService.syncLogLegalAgreement(vin: sanitizedVIN)
+        UIPasteboard.general.string = sanitizedVIN
+        pendingExtractionEntry = nil
+        shouldCheckBidCacheInFlow = true
+        showExtractionFlow = true
     }
 
     private func handleCalendarTap() {
         haptic(.light)
         pendingCalendarEntry = entry
-        pendingCalendarLabel = calendarEntryLabel
-        showCalendarConfirm = true
     }
 
     private func handleWebTap() {
         haptic(.light)
-        switch statVinLookupStatus {
-        case .hasHistory:
-            if let url = URL(string: "https://stat.vin/cars/\(entry.vin)") {
-                statVinURL = url
-            }
-        case .unknown, .noHistory:
-            showStatVinFlow = true
-        }
+        showStatVinFlow = true
     }
 
     private func nextUpgradeOffer() -> (name: String, limit: String)? {
@@ -464,13 +503,13 @@ struct VehicleCardView: View {
     }
 
     @ViewBuilder
-    private func brandListSecondaryButtonLabel(icon: String, tint: Color = .white.opacity(0.38)) -> some View {
+    private func brandListSecondaryButtonLabel(icon: String, tint: Color = Color.primary.opacity(0.50)) -> some View {
         ZStack {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color(hex: "#1A1A1A"))
+                .fill(Color(.tertiarySystemBackground))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.07), lineWidth: 0.5)
+                        .strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5)
                 )
 
             Image(systemName: icon)
@@ -486,26 +525,26 @@ struct VehicleCardView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(yearStr)
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.white.opacity(0.25))
+                        .foregroundColor(Color.primary.opacity(0.35))
                         .kerning(1)
 
                     Text("\(displayMake) \(brandListModelTrim)")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.88))
+                        .foregroundColor(Color.primary.opacity(0.88))
                         .kerning(-0.4)
                         .lineLimit(1)
 
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text(entry.vin)
                             .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.28))
+                            .foregroundColor(Color.primary.opacity(0.35))
                             .kerning(0.2)
                             .lineLimit(1)
 
                         if let brandListMpgSummary {
                             Text(brandListMpgSummary)
                                 .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.22))
+                                .foregroundColor(Color.primary.opacity(0.30))
                                 .lineLimit(1)
                         }
                     }
@@ -516,11 +555,11 @@ struct VehicleCardView: View {
                     Button(action: handleFavoriteTap) {
                         ZStack {
                             Circle()
-                                .fill(Color(hex: "#1A1A1A"))
+                                .fill(Color(.tertiarySystemBackground))
                                 .frame(width: 30, height: 30)
                                 .overlay(
                                     Circle()
-                                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
+                                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
                                 )
 
                             Image(systemName: isFav ? "heart.fill" : "heart")
@@ -528,7 +567,7 @@ struct VehicleCardView: View {
                                 .foregroundColor(
                                     isFav
                                         ? Color(hex: "#C5A455").opacity(0.85)
-                                        : .white.opacity(0.22)
+                                        : Color.primary.opacity(0.30)
                                 )
                         }
                     }
@@ -546,18 +585,18 @@ struct VehicleCardView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("MILES")
                         .font(.system(size: 8.5, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.20))
+                        .foregroundColor(Color.primary.opacity(0.35))
                         .kerning(1)
 
                     HStack(alignment: .firstTextBaseline, spacing: 2) {
                         Text(brandListMileage ?? "—")
                             .font(.system(size: 13, weight: .medium, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.70))
+                            .foregroundColor(Color.primary.opacity(0.75))
 
                         if brandListMileage != nil {
                             Text("mi")
                                 .font(.system(size: 9))
-                                .foregroundColor(.white.opacity(0.20))
+                                .foregroundColor(Color.primary.opacity(0.35))
                         }
                     }
                 }
@@ -566,34 +605,34 @@ struct VehicleCardView: View {
 
                 Divider()
                     .frame(height: 28)
-                    .opacity(0.06)
+                    .opacity(0.08)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("PRICE")
                         .font(.system(size: 8.5, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.20))
+                        .foregroundColor(Color.primary.opacity(0.35))
                         .kerning(1)
 
                     Text(odoInfo?.privateValue.formatAsCurrency() ?? "—")
                         .font(.system(size: 13, weight: .medium, design: .monospaced))
-                        .foregroundColor(odoInfo != nil ? .white.opacity(0.70) : .white.opacity(0.20))
+                        .foregroundColor(odoInfo != nil ? Color.primary.opacity(0.75) : Color.primary.opacity(0.35))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 12)
 
                 Divider()
                     .frame(height: 28)
-                    .opacity(0.06)
+                    .opacity(0.08)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("ENGINE")
                         .font(.system(size: 8.5, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.20))
+                        .foregroundColor(Color.primary.opacity(0.35))
                         .kerning(1)
 
                     Text(brandListEngine ?? "—")
                         .font(.system(size: 13, weight: .medium, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.65))
+                        .foregroundColor(Color.primary.opacity(0.70))
                         .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -606,7 +645,7 @@ struct VehicleCardView: View {
                 .opacity(0.05)
 
             HStack(spacing: 6) {
-                if odoInfo == nil && !isFavoritesContext {
+                if !hasCompleteBidData {
                     Button(action: handleBidTap) {
                         HStack(spacing: 5) {
                             Image(systemName: "arrow.up.right")
@@ -648,7 +687,7 @@ struct VehicleCardView: View {
                         brandListSecondaryButtonLabel(
                             icon: statVinIcon,
                             tint: statVinLookupStatus == .unknown
-                                ? .white.opacity(0.38)
+                                ? Color.primary.opacity(0.40)
                                 : statVinButtonTint.opacity(0.85)
                         )
                     }
@@ -892,7 +931,7 @@ struct VehicleCardView: View {
                 }
 
                 HStack(spacing: 8) {
-                    if odoInfo == nil {
+                    if !hasCompleteBidData {
                         Button(action: handleBidTap) {
                             Image(systemName: "hammer.fill")
                         }
@@ -972,15 +1011,15 @@ struct VehicleCardView: View {
             }
         }
         .font(.system(.subheadline))
-        .foregroundStyle(layout == .brandList ? AnyShapeStyle(.white.opacity(0.82)) : AnyShapeStyle(cardPrimaryTextColor))
+        .foregroundStyle(cardPrimaryTextColor)
         .padding(layout == .brandList ? 0 : 16)
-        .background(layout == .brandList ? Color(hex: "#111111") : cardSurfaceColor)
+        .background(layout == .brandList ? brandListCardBackgroundColor : cardSurfaceColor)
         .clipShape(RoundedRectangle(cornerRadius: layout == .brandList ? 14 : 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: layout == .brandList ? 14 : 16, style: .continuous)
                 .stroke(
                     layout == .brandList
-                        ? Color.white.opacity(0.08)
+                        ? Color.primary.opacity(0.08)
                         : (processed ? primaryActionTint.opacity(0.6) : cardBorderColor),
                     lineWidth: 0.5
                 )
@@ -1017,16 +1056,13 @@ struct VehicleCardView: View {
             Text("\(pendingFavoriteLabel)\n\nThis vehicle will be moved to Favorites.")
         }
 
-        .alert("Agregar al calendario", isPresented: $showCalendarConfirm) {
-            Button("Cancelar", role: .cancel) { pendingCalendarEntry = nil }
-            Button("Agregar") {
-                if let e = pendingCalendarEntry {
-                    addToCalendar(entry: e)
-                    pendingCalendarEntry = nil
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
-                }
+        .sheet(item: $pendingCalendarEntry) { e in
+            CalendarConfirmationSheet(label: calendarEntryDetails) {
+                addToCalendar(entry: e)
+                pendingCalendarEntry = nil
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
             }
-        } message: { Text(pendingCalendarLabel) }
+        }
 
         .alert(isQuotaExceededAlert ? "Daily Limit Reached" : "Extraction Failed",
                isPresented: $showExtractionErrorAlert) {
@@ -1045,20 +1081,13 @@ struct VehicleCardView: View {
             }
         } message: { Text(extractionErrorMessage ?? "An unknown error occurred.") }
 
-        .alert("Legal Disclaimer", isPresented: $showLegalDisclaimer) {
-            Button("Cancel", role: .cancel) { pendingExtractionEntry = nil }
-            Button("Accept & Fetch") {
-                if let e = pendingExtractionEntry {
-                    let sanitizedVIN = normalizeVIN(e.vin)
-                    supabaseService.syncLogLegalAgreement(vin: sanitizedVIN)
-                    UIPasteboard.general.string = sanitizedVIN
-                    showExtractionFlow      = true
-                    pendingExtractionEntry  = nil
-                }
-            }
-        } message: {
-            if let e = pendingExtractionEntry {
-                Text("You are about to fetch the last recorded inspection date, reported mileage, and an estimated DMV Private Value for the \(normalizedYear(e.year)) \(e.make) \(e.model).\n\nDISCLAIMER:\nThis data is retrieved from public third-party sources and is provided 'AS IS' strictly for informational purposes.\n\nNO WARRANTIES:\nWe make no warranties regarding its accuracy, completeness, or current validity.\n\nLIABILITY:\nBy proceeding, you agree that we accept no liability for any decisions made based on this data.")
+        .sheet(item: $pendingExtractionEntry) { e in
+            BidConfirmationSheet(
+                title: cardTitle,
+                vin: normalizeVIN(e.vin),
+                skipBidDisclaimer: $skipBidDisclaimer
+            ) {
+                startExtraction(for: e)
             }
         }
 
@@ -1066,15 +1095,15 @@ struct VehicleCardView: View {
             StatVinFlowView(
                 vin: entry.vin,
                 cardKey: cardKey,
-                initialFlowState: statVinLookupStatus == .noHistory ? .noPhotos : .confirming,
-                onSaveResult: { resolvedURL in
-                    let status = Self.statVinStatus(for: resolvedURL)
-                    guard status != .unknown else { return }
+                vehicleTitle: cardTitle,
+                initialFlowState: statVinLookupStatus == .noHistory ? .noPhotos : (statVinLookupStatus == .hasHistory ? .photosFound : .confirming),
+                onSaveResult: { result in
+                    guard result.status != .unknown else { return }
                     Task {
                         await supabaseService.saveStatVinLookupResult(
                             forVIN: cardKey,
-                            status: status,
-                            resolvedURL: resolvedURL
+                            status: result.status,
+                            resolvedURL: result.resolvedURL
                         )
                     }
                 }
@@ -1083,14 +1112,13 @@ struct VehicleCardView: View {
 
         .sheet(isPresented: Binding(get: { statVinURL != nil }, set: { if !$0 { statVinURL = nil } })) {
             if let url = statVinURL {
-                StatVinBrowserView(initialURL: url) { resolvedURL in
-                    let status = Self.statVinStatus(for: resolvedURL)
-                    guard status != .unknown else { return }
+                StatVinBrowserView(initialURL: url) { result in
+                    guard result.status != .unknown else { return }
                     Task {
                         await supabaseService.saveStatVinLookupResult(
                             forVIN: cardKey,
-                            status: status,
-                            resolvedURL: resolvedURL
+                            status: result.status,
+                            resolvedURL: result.resolvedURL
                         )
                     }
                 }
@@ -1181,7 +1209,11 @@ struct VehicleCardView: View {
         }
 
         .fullScreenCover(isPresented: $showExtractionFlow) {
-            ExtractionFlowView(entry: entry, lastProcessedVIN: $lastProcessedVIN)
+            ExtractionFlowView(
+                entry: entry,
+                lastProcessedVIN: $lastProcessedVIN,
+                shouldCheckSupabaseCacheOnAppear: shouldCheckBidCacheInFlow
+            )
                 .environmentObject(supabaseService)
                 .environmentObject(storeManager)
         }
@@ -1224,17 +1256,6 @@ struct VehicleCardView: View {
     private func openReport(for vin: String) {
         guard let url = carfaxVault.getReportURL(for: vin) else { return }
         carfaxReportURL = url
-    }
-
-    private nonisolated static func statVinStatus(for url: URL) -> StatVinLookupStatus {
-        let lowercasedURL = url.absoluteString.lowercased()
-        if lowercasedURL.contains("stat.vin/vin-decoding/") {
-            return .noHistory
-        }
-        if lowercasedURL.contains("stat.vin/cars/") {
-            return .hasHistory
-        }
-        return .unknown
     }
 
     private func fetchCarfaxReport() async {
@@ -1459,6 +1480,7 @@ struct ExtractionFlowView: View {
 
     let entry: HPDEntry
     @Binding var lastProcessedVIN: String?
+    let shouldCheckSupabaseCacheOnAppear: Bool
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var supabaseService: SupabaseService
@@ -1478,14 +1500,28 @@ struct ExtractionFlowView: View {
     @State private var contentOpacity:    Double  = 0
     @State private var addedToFavorites:  Bool    = false
     @State private var heartScale:        CGFloat = 1.0
+    @State private var dataLoadedFromSupabase = false
+    @State private var canStartWebExtraction = false
 
     private let gold = Color(hex: "#C5A455")
     private var cardKey: String { normalizeVIN(entry.vin) }
     private var isAlreadyFavorite: Bool { supabaseService.favorites.contains(cardKey) }
+    private var overlayVehicleTitle: String {
+        let make = supabaseService.decodedMakeByVIN[cardKey] ?? brandDisplayName(for: entry.make)
+        let model = supabaseService.decodedModelByVIN[cardKey]
+            ?? supabaseService.odoByVIN[cardKey]?.realModel?.capitalized
+            ?? entry.model
+        return "\(normalizedYear(entry.year)) \(make) \(model)".uppercased()
+    }
 
-    init(entry: HPDEntry, lastProcessedVIN: Binding<String?>) {
+    init(
+        entry: HPDEntry,
+        lastProcessedVIN: Binding<String?>,
+        shouldCheckSupabaseCacheOnAppear: Bool = true
+    ) {
         self.entry            = entry
         self._lastProcessedVIN = lastProcessedVIN
+        self.shouldCheckSupabaseCacheOnAppear = shouldCheckSupabaseCacheOnAppear
         self._mileageVIN      = State(initialValue: normalizeVIN(entry.vin))
     }
 
@@ -1552,12 +1588,14 @@ struct ExtractionFlowView: View {
                         .shadow(color: gold.opacity(0.40), radius: 14)
                         .padding(.bottom, 22)
 
-                    Text("\(entry.year) \(entry.make) \(entry.model)".uppercased())
+                    Text(overlayVehicleTitle)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(.white.opacity(0.30))
                         .kerning(1.4)
                         .multilineTextAlignment(.center)
+                        .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 20)
                         .padding(.bottom, 8)
 
                     Text(overlayMessage)
@@ -1565,7 +1603,18 @@ struct ExtractionFlowView: View {
                         .foregroundColor(.white)
                         .kerning(-0.6)
                         .multilineTextAlignment(.center)
-                        .padding(.bottom, 26)
+                        .padding(.bottom, 10)
+
+                    if exState == .success {
+                        Text(mileageVIN)
+                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.20))
+                            .kerning(0.4)
+                            .padding(.bottom, 16)
+                    } else {
+                        Spacer()
+                            .frame(height: 16)
+                    }
 
                     if exState == .success {
                         // Success state
@@ -1625,12 +1674,6 @@ struct ExtractionFlowView: View {
                             )
                         }
                         .padding(.bottom, 20)
-
-                        Text(mileageVIN)
-                            .font(.system(size: 11, weight: .regular, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.20))
-                            .kerning(0.4)
-                            .padding(.bottom, 22)
 
                         if addedToFavorites {
                             // Post-add confirmation
@@ -1798,7 +1841,8 @@ struct ExtractionFlowView: View {
             }
 
             // MileageWebView — hidden when fetching, visible at height 500 for captcha
-            if let mUrl = URL(string: "https://www.mytxcar.org/TXCar_Net/SecurityCheck.aspx") {
+            if canStartWebExtraction,
+               let mUrl = URL(string: "https://www.mytxcar.org/TXCar_Net/SecurityCheck.aspx") {
                 MileageWebView(
                     url:                  mUrl,
                     isActive:             true,
@@ -1845,21 +1889,29 @@ struct ExtractionFlowView: View {
                 shimmerX = 180
             }
             Task {
-                async let cacheResult = supabaseService.loadQuickDataCacheFromSupabase(forVIN: mileageVIN)
-                async let minDelay: Void = Task.sleep(nanoseconds: 1_500_000_000)
-                let (hit, _) = await (cacheResult, try? minDelay)
-                if hit {
-                    await supabaseService.incrementQuota(vin: mileageVIN)
-                    await MainActor.run {
-                        VINFailureTracker.shared.clearFailures(vin: mileageVIN)
-                        lastProcessedVIN = mileageVIN
-                        exState = .success
-                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                if shouldCheckSupabaseCacheOnAppear {
+                    async let cacheResult = supabaseService.loadQuickDataCacheFromSupabase(forVIN: mileageVIN)
+                    async let minDelay: Void = Task.sleep(nanoseconds: 2_300_000_000)
+                    let (hit, _) = await (cacheResult, try? minDelay)
+                    if hit {
+                        await supabaseService.incrementQuota(vin: mileageVIN)
+                        await MainActor.run {
+                            VINFailureTracker.shared.clearFailures(vin: mileageVIN)
+                            lastProcessedVIN = mileageVIN
+                            dataLoadedFromSupabase = true
+                            canStartWebExtraction = false
+                            if supabaseService.favorites.contains(cardKey) {
+                                supabaseService.syncUpsertFavorite(entry: entry)
+                            }
+                            exState = .success
+                            UINotificationFeedbackGenerator().notificationOccurred(.success)
+                        }
+                        return
                     }
-                    return
                 }
 
                 await MainActor.run {
+                    canStartWebExtraction = true
                     startWatchdog(for: .fetchingOdometer, token: cancelToken)
                 }
             }
@@ -1870,7 +1922,8 @@ struct ExtractionFlowView: View {
 
     private var overlayMessage: String {
         switch exState {
-        case .fetchingOdometer:  return "Fetching odometer..."
+        case .fetchingOdometer:
+            return dataLoadedFromSupabase ? "Loading vehicle data..." : "Fetching odometer..."
         case .waitingForCaptcha: return "Solve the CAPTCHA"
         case .fetchingPrice:     return "Fetching private value..."
         case .success:           return "Data loaded!"
@@ -1958,23 +2011,26 @@ struct ExtractionFlowView: View {
 // MARK: - StatVinFlowView
 //
 // Shown instead of an alert when the user taps the globe/photo button.
-// - .confirming  → dark/gold intro screen asking if they want to search history
-// - .noPhotos    → dark/gold result screen shown when no photos were found
+// - .confirming    → dark/gold intro screen asking if they want to search history
+// - .photosFound   → dark/gold result screen shown when photos were found (with link option)
+// - .noPhotos      → dark/gold result screen shown when no photos were found
 //   (also shown immediately on subsequent taps when status is already .noHistory)
-// When the browser resolves to noHistory it dismisses itself and transitions to .noPhotos.
-// When status is .hasHistory the card opens the browser directly, bypassing this view.
+// When the browser resolves to noHistory it dismisses itself and transitions to .photosFound.
+// When the browser resolves to hasHistory it dismisses itself and transitions to .photosFound.
 
 struct StatVinFlowView: View {
 
-    enum FlowState { case confirming, noPhotos }
+    enum FlowState { case confirming, photosFound, noPhotos }
 
     let vin: String
     let cardKey: String
-    let onSaveResult: (URL) -> Void
+    let vehicleTitle: String
+    let onSaveResult: (StatVinLookupResult) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var flowState: FlowState
     @State private var showBrowser = false
+    @State private var resolvedPhotoURL: URL?
     @State private var glowPulse  = false
     @State private var contentOpacity: Double = 0
 
@@ -1983,13 +2039,20 @@ struct StatVinFlowView: View {
     init(
         vin: String,
         cardKey: String,
+        vehicleTitle: String,
         initialFlowState: FlowState,
-        onSaveResult: @escaping (URL) -> Void
+        onSaveResult: @escaping (StatVinLookupResult) -> Void
     ) {
         self.vin          = vin
         self.cardKey      = cardKey
+        self.vehicleTitle = vehicleTitle
         self.onSaveResult = onSaveResult
         _flowState        = State(initialValue: initialFlowState)
+        
+        // Si se inicializa con .photosFound, generar la URL
+        if initialFlowState == .photosFound {
+            _resolvedPhotoURL = State(initialValue: URL(string: "https://stat.vin/cars/\(vin)"))
+        }
     }
 
     var body: some View {
@@ -2080,6 +2143,81 @@ struct StatVinFlowView: View {
                         .buttonStyle(.plain)
                     }
 
+                } else if flowState == .photosFound {
+                    // Photos found state
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: "photo.fill")
+                            .font(.system(size: 42))
+                            .foregroundColor(.white.opacity(0.13))
+                        Circle()
+                            .fill(Color(hex: "#0A0A0A"))
+                            .frame(width: 24, height: 24)
+                            .overlay(
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 22))
+                                    .foregroundColor(gold.opacity(0.85))
+                            )
+                            .offset(x: 8, y: -8)
+                    }
+                    .padding(.bottom, 24)
+
+                    Text("PHOTOS FOUND")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.28))
+                        .kerning(1.8)
+                        .padding(.bottom, 10)
+
+                    Text("We found photos from a previous auction for this vehicle.")
+                        .font(.system(size: 14))
+                        .foregroundColor(.white.opacity(0.42))
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(4)
+                        .padding(.horizontal, 28)
+                        .padding(.bottom, 20)
+
+                    Text(vehicleTitle)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white.opacity(0.55))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 28)
+                        .padding(.bottom, 4)
+
+                    Text(vin)
+                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.20))
+                        .kerning(0.4)
+                        .padding(.bottom, 30)
+
+                    HStack(spacing: 12) {
+                        Button { dismiss() } label: {
+                            Text("Close")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.white.opacity(0.38))
+                                .padding(.horizontal, 30)
+                                .padding(.vertical, 12)
+                                .background(Color.white.opacity(0.07))
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+
+                        if resolvedPhotoURL != nil {
+                            Button { showBrowser = true } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "photo.fill")
+                                    Text("View Pics")
+                                }
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(Color(hex: "#0A0A0A"))
+                                .padding(.horizontal, 22)
+                                .padding(.vertical, 12)
+                                .background(gold)
+                                .clipShape(Capsule())
+                                .shadow(color: gold.opacity(0.35), radius: 8)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
                 } else {
                     // noPhotos state
                     ZStack(alignment: .bottomTrailing) {
@@ -2110,7 +2248,14 @@ struct StatVinFlowView: View {
                         .multilineTextAlignment(.center)
                         .lineSpacing(4)
                         .padding(.horizontal, 28)
-                        .padding(.bottom, 36)
+                        .padding(.bottom, 20)
+
+                    Text(vehicleTitle)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white.opacity(0.55))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 28)
+                        .padding(.bottom, 4)
 
                     Text(vin)
                         .font(.system(size: 11, weight: .regular, design: .monospaced))
@@ -2140,17 +2285,259 @@ struct StatVinFlowView: View {
         }
         .sheet(isPresented: $showBrowser) {
             if let url = URL(string: "https://stat.vin/cars/\(vin)") {
-                StatVinBrowserView(initialURL: url) { resolvedURL in
-                    onSaveResult(resolvedURL)
-                    if resolvedURL.absoluteString.lowercased().contains("stat.vin/vin-decoding/") {
-                        DispatchQueue.main.async {
-                            showBrowser = false
-                            withAnimation(.easeInOut(duration: 0.35)) { flowState = .noPhotos }
-                        }
+                StatVinBrowserView(initialURL: url) { result in
+                    let lowercasedURL = result.resolvedURL.absoluteString.lowercased()
+                    guard lowercasedURL.contains("stat.vin/cars/") || lowercasedURL.contains("stat.vin/vin-decoding/") else {
+                        print("STAT.VIN: invalid resolved URL, not saving: \(result.resolvedURL.absoluteString)")
+                        return
                     }
+
+                    if result.status == .hasHistory {
+                        resolvedPhotoURL = result.resolvedURL
+                        withAnimation(.easeInOut(duration: 0.35)) {
+                            flowState = .photosFound
+                        }
+                    } else {
+                        withAnimation(.easeInOut(duration: 0.35)) {
+                            flowState = .noPhotos
+                        }
+                        showBrowser = false
+                    }
+
+                    onSaveResult(result)
                 }
                 .ignoresSafeArea()
             }
+        }
+    }
+}
+
+// MARK: - BidConfirmationSheet
+
+private struct BidConfirmationSheet: View {
+    let title: String
+    let vin: String
+    @Binding var skipBidDisclaimer: Bool
+    let onConfirm: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var glowPulse = false
+    @State private var contentOpacity: Double = 0
+
+    private let gold = Color(hex: "#C5A455")
+
+    var body: some View {
+        ZStack {
+            AppChromeBackground()
+
+            VStack(spacing: 0) {
+                LoneStarView(gold: gold)
+                    .frame(width: 38, height: 38)
+                    .shadow(color: gold.opacity(0.40), radius: 14)
+                    .padding(.bottom, 28)
+
+                Text("DATA EXTRACTION")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.28))
+                    .kerning(1.8)
+                    .padding(.bottom, 10)
+
+                Text("Fetch Vehicle Data")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundColor(.white)
+                    .kerning(-0.6)
+                    .padding(.bottom, 6)
+
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.white.opacity(0.55))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(nil)
+                    .padding(.bottom, 4)
+
+                Text(vin)
+                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.20))
+                    .kerning(0.4)
+                    .padding(.bottom, 28)
+
+                VStack(alignment: .leading, spacing: 14) {
+                    dataRow(icon: "fuelpump.fill",  text: "Last recorded mileage")
+                    dataRow(icon: "calendar",        text: "Last inspection date")
+                    dataRow(icon: "banknote.fill",   text: "Estimated DMV private value")
+                }
+                .padding(.bottom, 24)
+
+                Text("Data is from public third-party sources, provided AS IS. No warranties. No liability.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.22))
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(3)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 20)
+
+                Toggle(isOn: $skipBidDisclaimer) {
+                    Text("Don't show this again")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white.opacity(0.72))
+                }
+                .tint(gold)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 36)
+
+                HStack(spacing: 12) {
+                    Button { dismiss() } label: {
+                        Text("Cancel")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.white.opacity(0.38))
+                            .padding(.horizontal, 28)
+                            .padding(.vertical, 12)
+                            .background(Color.white.opacity(0.07))
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        onConfirm()
+                        dismiss()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "hammer.fill")
+                            Text("Accept & Fetch")
+                        }
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(Color(hex: "#0A0A0A"))
+                        .padding(.horizontal, 22)
+                        .padding(.vertical, 12)
+                        .background(gold)
+                        .clipShape(Capsule())
+                        .shadow(color: gold.opacity(0.35), radius: 8)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .opacity(contentOpacity)
+            .padding(.horizontal, 32)
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .onAppear {
+            glowPulse = true
+            withAnimation(.easeOut(duration: 0.5)) { contentOpacity = 1 }
+        }
+    }
+
+    @ViewBuilder
+    private func dataRow(icon: String, text: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13))
+                .foregroundColor(gold.opacity(0.80))
+                .frame(width: 20)
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundColor(.white.opacity(0.50))
+        }
+    }
+}
+
+// MARK: - CalendarConfirmationSheet
+
+private struct CalendarConfirmationSheet: View {
+    let label: String
+    let onConfirm: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var glowPulse = false
+    @State private var contentOpacity: Double = 0
+
+    private let gold = Color(hex: "#C5A455")
+
+    var body: some View {
+        ZStack {
+            Color(hex: "#0A0A0A").ignoresSafeArea()
+
+            Canvas { ctx, size in
+                let spacing: CGFloat = 36
+                var path = Path()
+                var x: CGFloat = 0
+                while x <= size.width { path.move(to: .init(x: x, y: 0)); path.addLine(to: .init(x: x, y: size.height)); x += spacing }
+                var y: CGFloat = 0
+                while y <= size.height { path.move(to: .init(x: 0, y: y)); path.addLine(to: .init(x: size.width, y: y)); y += spacing }
+                ctx.stroke(path, with: .color(gold.opacity(0.035)), lineWidth: 0.5)
+            }
+            .ignoresSafeArea()
+
+            RadialGradient(colors: [gold.opacity(0.10), .clear], center: .center, startRadius: 0, endRadius: 300)
+                .scaleEffect(glowPulse ? 1.12 : 0.88)
+                .animation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true), value: glowPulse)
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                LoneStarView(gold: gold)
+                    .frame(width: 38, height: 38)
+                    .shadow(color: gold.opacity(0.40), radius: 14)
+                    .padding(.bottom, 28)
+
+                Text("AUCTION DATE")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.28))
+                    .kerning(1.8)
+                    .padding(.bottom, 10)
+
+                Text("Add to Calendar")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundColor(.white)
+                    .kerning(-0.6)
+                    .padding(.bottom, 16)
+
+                Text(label)
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.42))
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(4)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 40)
+
+                HStack(spacing: 12) {
+                    Button { dismiss() } label: {
+                        Text("Not Now")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.white.opacity(0.38))
+                            .padding(.horizontal, 28)
+                            .padding(.vertical, 12)
+                            .background(Color.white.opacity(0.07))
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        onConfirm()
+                        dismiss()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "calendar.badge.plus")
+                            Text("Add to Calendar")
+                        }
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(Color(hex: "#0A0A0A"))
+                        .padding(.horizontal, 22)
+                        .padding(.vertical, 12)
+                        .background(gold)
+                        .clipShape(Capsule())
+                        .shadow(color: gold.opacity(0.35), radius: 8)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .opacity(contentOpacity)
+            .padding(.horizontal, 32)
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .onAppear {
+            glowPulse = true
+            withAnimation(.easeOut(duration: 0.5)) { contentOpacity = 1 }
         }
     }
 }

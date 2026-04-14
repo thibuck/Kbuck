@@ -182,15 +182,15 @@ struct FilteredAuctionListView: View {
 
                                 Text("Decoding VINs: \(decodedCount)/\(totalToDecode)")
                                     .font(.footnote.weight(.semibold))
-                                    .foregroundStyle(.white.opacity(0.65))
+                                    .foregroundStyle(Color.primary.opacity(0.65))
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(14)
-                            .background(paletteColor("#111111"))
+                            .background(Color(.secondarySystemBackground))
                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
+                                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
                             )
                         }
 
@@ -212,7 +212,7 @@ struct FilteredAuctionListView: View {
                 }
             }
         }
-        .background(paletteColor("#0A0A0A").ignoresSafeArea())
+        .background(Color(.systemBackground).ignoresSafeArea())
         .searchable(text: $searchText, prompt: "Search VIN, Year, Brand or Model")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -222,11 +222,11 @@ struct FilteredAuctionListView: View {
                 } label: {
                     ZStack {
                         Circle()
-                            .fill(paletteColor("#1A1A1A"))
+                            .fill(Color(.secondarySystemBackground))
                             .frame(width: 34, height: 34)
                         Image(systemName: "chevron.left")
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.white.opacity(0.55))
+                            .foregroundColor(Color.primary.opacity(0.55))
                     }
                 }
                 .buttonStyle(.plain)
@@ -236,11 +236,11 @@ struct FilteredAuctionListView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(navigationBrandName.uppercased())
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.20))
+                        .foregroundColor(Color.primary.opacity(0.35))
                         .kerning(1.5)
                     Text("\(displayedVehicles.count) vehicles")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.82))
+                        .foregroundColor(Color.primary.opacity(0.82))
                         .kerning(-0.3)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -252,11 +252,11 @@ struct FilteredAuctionListView: View {
                 } label: {
                     ZStack {
                         Circle()
-                            .fill(paletteColor("#1A1A1A"))
+                            .fill(Color(.secondarySystemBackground))
                             .frame(width: 34, height: 34)
                         Image(systemName: "info.circle")
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.white.opacity(0.55))
+                            .foregroundColor(Color.primary.opacity(0.55))
                     }
                 }
                 .buttonStyle(.plain)
@@ -264,9 +264,8 @@ struct FilteredAuctionListView: View {
         }
         .navigationBarBackButtonHidden(true)
         .background(SwipeBackEnabler().frame(width: 0, height: 0))
-        .toolbarBackground(paletteColor("#0A0A0A"), for: .navigationBar)
+        .toolbarBackground(Color(.systemBackground), for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
-        .toolbarColorScheme(.dark, for: .navigationBar)
         .alert("Data Information", isPresented: $showDataInfo) {
             Button("OK", role: .cancel) {}
         } message: {

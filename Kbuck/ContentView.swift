@@ -144,55 +144,58 @@ struct ContentView: View {
             if !isAuthReady {
                 ProgressView()
             } else if isAuthenticated {
-                TabView(selection: $selectedTab) {
-                    HomeSummaryView(selectedTab: $selectedTab, targetLocationFilter: $crossTabLocationFilter)
-                        .tabItem {
-                            VStack(spacing: 2) {
-                                Image(systemName: selectedTab == homeTab ? "house.fill" : "house")
-                                Text("Home")
-                            }
-                        }
-                        .tag(homeTab)
-                    // Temporarily hidden from the app UI, but kept in code for later reuse.
-                    // HPDView(externalLocationFilter: $crossTabLocationFilter)
-                    //     .tabItem { Label("HPD AUCTION", systemImage: "car.fill") }
-                    //     .tag(1)
-                    HPDView(favoritesOnly: true, externalLocationFilter: .constant(nil))
-                        .tabItem {
-                            VStack(spacing: 2) {
-                                Image(systemName: selectedTab == favoritesTab ? "heart.fill" : "heart")
-                                Text("Favorites")
-                            }
-                        }
-                        .tag(favoritesTab)
-                    if !carfaxVault.savedReports.isEmpty {
-                        CarfaxVaultView()
+                ZStack {
+                    AppChromeBackground()
+                    TabView(selection: $selectedTab) {
+                        HomeSummaryView(selectedTab: $selectedTab, targetLocationFilter: $crossTabLocationFilter)
                             .tabItem {
                                 VStack(spacing: 2) {
-                                    Image(systemName: selectedTab == reportsTab ? "doc.text.fill" : "doc.text")
-                                    Text("Reports")
+                                    Image(systemName: selectedTab == homeTab ? "house.fill" : "house")
+                                    Text("Home")
                                 }
                             }
-                            .tag(reportsTab)
-                    }
-                    if userRole == "super_admin" {
-                        AdminCarfaxLookupView()
+                            .tag(homeTab)
+                        // Temporarily hidden from the app UI, but kept in code for later reuse.
+                        // HPDView(externalLocationFilter: $crossTabLocationFilter)
+                        //     .tabItem { Label("HPD AUCTION", systemImage: "car.fill") }
+                        //     .tag(1)
+                        HPDView(favoritesOnly: true, externalLocationFilter: .constant(nil))
                             .tabItem {
                                 VStack(spacing: 2) {
-                                    Image(systemName: selectedTab == adminCarfaxTab ? "doc.text.fill" : "doc.text")
-                                    Text("Carfax")
+                                    Image(systemName: selectedTab == favoritesTab ? "heart.fill" : "heart")
+                                    Text("Favorites")
                                 }
                             }
-                            .tag(adminCarfaxTab)
-                    }
-                    HPDSettingsView()
-                        .tabItem {
-                            VStack(spacing: 2) {
-                                Image(systemName: selectedTab == settingsTab ? "gearshape.fill" : "gearshape")
-                                Text("Settings")
-                            }
+                            .tag(favoritesTab)
+                        if !carfaxVault.savedReports.isEmpty {
+                            CarfaxVaultView()
+                                .tabItem {
+                                    VStack(spacing: 2) {
+                                        Image(systemName: selectedTab == reportsTab ? "archivebox.fill" : "archivebox")
+                                        Text("Reports")
+                                    }
+                                }
+                                .tag(reportsTab)
                         }
-                        .tag(settingsTab)
+                        if userRole == "super_admin" {
+                            AdminCarfaxLookupView()
+                                .tabItem {
+                                    VStack(spacing: 2) {
+                                        Image(systemName: selectedTab == adminCarfaxTab ? "doc.text.fill" : "doc.text")
+                                        Text("Carfax")
+                                    }
+                                }
+                                .tag(adminCarfaxTab)
+                        }
+                        HPDSettingsView()
+                            .tabItem {
+                                VStack(spacing: 2) {
+                                    Image(systemName: selectedTab == settingsTab ? "gearshape.fill" : "gearshape")
+                                    Text("Settings")
+                                }
+                            }
+                            .tag(settingsTab)
+                    }
                 }
                 .tint(Color(hex: "#C5A455"))
             } else {
