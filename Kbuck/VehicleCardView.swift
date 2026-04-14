@@ -31,6 +31,11 @@ private extension Color {
 
 struct VehicleCardView: View {
 
+    enum LayoutStyle {
+        case standard
+        case brandList
+    }
+
     let entry: HPDEntry
     var showAddress: Bool = true
     var showQuickInventory: Bool = true
@@ -38,6 +43,7 @@ struct VehicleCardView: View {
     var showBrandLogo: Bool = true
     var isFavoritesContext: Bool = false
     var shouldLoadVINCacheOnAppear: Bool = true
+    var layout: LayoutStyle = .standard
 
     @EnvironmentObject private var supabaseService: SupabaseService
     @EnvironmentObject private var storeManager: StoreManager
@@ -55,6 +61,7 @@ struct VehicleCardView: View {
         showBrandLogo: Bool = true,
         isFavoritesContext: Bool = false,
         shouldLoadVINCacheOnAppear: Bool = true,
+        layout: LayoutStyle = .standard,
         initiallyExpanded: Bool = false
     ) {
         self.entry = entry
@@ -64,6 +71,7 @@ struct VehicleCardView: View {
         self.showBrandLogo = showBrandLogo
         self.isFavoritesContext = isFavoritesContext
         self.shouldLoadVINCacheOnAppear = shouldLoadVINCacheOnAppear
+        self.layout = layout
         _isExpanded = State(initialValue: initiallyExpanded)
     }
     @State private var copiedVIN: String? = nil
@@ -81,7 +89,7 @@ struct VehicleCardView: View {
     @State private var pendingCalendarLabel = ""
 
     // Web / stat.vin
-    @State private var showWebAlert = false
+    @State private var showStatVinFlow = false
     @State private var statVinURL: URL? = nil
     @State private var carfaxReportURL: URL? = nil
 
@@ -218,6 +226,13 @@ struct VehicleCardView: View {
             return "Pics found"
         }
     }
+    private var statVinIcon: String {
+        switch statVinLookupStatus {
+        case .unknown:    return "globe"
+        case .hasHistory: return "photo.fill"
+        case .noHistory:  return "photo.fill"
+        }
+    }
     private var isCarfaxEnabled: Bool {
         supabaseService.isCarfaxEnabled
     }
@@ -234,16 +249,150 @@ struct VehicleCardView: View {
 
     private var shareText: String {
         var parts = ["\(yearStr) \(displayMake) \(displayModel)", "VIN: \(entry.vin)"]
+        let addr = entry.lotAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !addr.isEmpty {
+            var locationLine = addr
+            if let time = entry.time, !time.isEmpty { locationLine += " • \(time)" }
+            parts.append(locationLine)
+        }
         if let odo = odoInfo {
             parts.append("Miles: \(odo.odometer.formatWithCommas())")
             let price = odo.privateValue.formatAsCurrency()
             if price != "N/A" { parts.append("Value: \(price)") }
         }
+        if let engine = engineInfo { parts.append("Engine: \(engine)") }
         return parts.joined(separator: "\n")
     }
 
     private var calendarEntryLabel: String {
         "\(yearStr) \(displayMake) \(displayModel) - \(entry.dateScheduled)"
+    }
+
+    private var brandListModelTrim: String {
+        let combined = [displayModel, trimInfo]
+            .compactMap { value -> String? in
+                guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+                    return nil
+                }
+                return value
+            }
+            .joined(separator: " ")
+
+        return titleCasedVehicleText(combined)
+    }
+
+    private var brandListCityMPG: String? {
+        cityMpgInfo?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var brandListHighwayMPG: String? {
+        hwyMpgInfo?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var brandListMileage: String? {
+        guard let rawOdo = odoInfo?.odometer else { return nil }
+        let digits = rawOdo.filter(\.isNumber)
+        guard let value = Int(digits), value > 0 else { return nil }
+        return String(value).formatWithCommas()
+    }
+
+    private var brandListEngine: String? {
+        guard let engineInfo else { return nil }
+        let trimmed = engineInfo.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed.replacingOccurrences(of: " V", with: " v")
+    }
+
+    private var brandListMpgSummary: String? {
+        switch (brandListCityMPG, brandListHighwayMPG) {
+        case let (city?, highway?):
+            return "\(city)/\(highway) mpg"
+        case let (city?, nil):
+            return "\(city) mpg"
+        case let (nil, highway?):
+            return "\(highway) mpg"
+        default:
+            return nil
+        }
+    }
+
+    private func titleCasedVehicleText(_ text: String) -> String {
+        text
+            .split(separator: " ")
+            .map { rawPart in
+                let part = String(rawPart)
+                if part.rangeOfCharacter(from: .decimalDigits) != nil {
+                    return part.uppercased()
+                }
+                if part.count <= 3 && part == part.uppercased() {
+                    return part
+                }
+                let lower = part.lowercased()
+                return lower.prefix(1).uppercased() + lower.dropFirst()
+            }
+            .joined(separator: " ")
+    }
+
+    private func handleFavoriteTap() {
+        haptic(.light)
+        if isFav {
+            supabaseService.removeFavoriteLocally(cardKey)
+            supabaseService.syncRemoveFavorite(cardKey)
+        } else {
+            pendingFavoriteKey = cardKey
+            pendingFavoriteEntry = entry
+            pendingFavoriteLabel = "\(yearStr) \(entry.make) \(entry.model) - \(entry.vin)"
+            showFavoriteConfirm = true
+        }
+    }
+
+    private func handleBidTap() {
+        let failStatus = VINFailureTracker.shared.status(for: cardKey)
+        if !failStatus.canTry {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            extractionErrorMessage = failStatus.errorMessage
+            showExtractionErrorAlert = true
+            return
+        }
+
+        let currentLimit = currentServerDailyLimit
+        let currentUsage = supabaseService.currentProfile?.effectiveDailyUsage ?? 0
+        let isUnlimited = currentLimit == Int.max
+
+        if !isUnlimited && currentUsage >= currentLimit {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            let limitStr = "\(currentLimit)"
+            isQuotaExceededAlert = true
+            if let offer = nextUpgradeOffer() {
+                extractionErrorMessage = "You've reached your daily limit of \(limitStr). Upgrade to \(offer.name) to unlock up to \(offer.limit) daily extractions."
+            } else {
+                extractionErrorMessage = "You've reached your daily limit of \(limitStr) for your current plan."
+            }
+            showExtractionErrorAlert = true
+            return
+        }
+
+        haptic(.medium)
+        pendingExtractionEntry = entry
+        showLegalDisclaimer = true
+    }
+
+    private func handleCalendarTap() {
+        haptic(.light)
+        pendingCalendarEntry = entry
+        pendingCalendarLabel = calendarEntryLabel
+        showCalendarConfirm = true
+    }
+
+    private func handleWebTap() {
+        haptic(.light)
+        switch statVinLookupStatus {
+        case .hasHistory:
+            if let url = URL(string: "https://stat.vin/cars/\(entry.vin)") {
+                statVinURL = url
+            }
+        case .unknown, .noHistory:
+            showStatVinFlow = true
+        }
     }
 
     private func nextUpgradeOffer() -> (name: String, limit: String)? {
@@ -314,11 +463,207 @@ struct VehicleCardView: View {
         }
     }
 
-    // MARK: - Body
+    @ViewBuilder
+    private func brandListSecondaryButtonLabel(icon: String, tint: Color = .white.opacity(0.38)) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(hex: "#1A1A1A"))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.07), lineWidth: 0.5)
+                )
 
-    var body: some View {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundColor(tint)
+        }
+        .frame(maxWidth: .infinity, minHeight: 32)
+    }
+
+    private var brandListBody: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(yearStr)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.white.opacity(0.25))
+                        .kerning(1)
+
+                    Text("\(displayMake) \(brandListModelTrim)")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.88))
+                        .kerning(-0.4)
+                        .lineLimit(1)
+
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(entry.vin)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.28))
+                            .kerning(0.2)
+                            .lineLimit(1)
+
+                        if let brandListMpgSummary {
+                            Text(brandListMpgSummary)
+                                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.22))
+                                .lineLimit(1)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if showFavoriteButton {
+                    Button(action: handleFavoriteTap) {
+                        ZStack {
+                            Circle()
+                                .fill(Color(hex: "#1A1A1A"))
+                                .frame(width: 30, height: 30)
+                                .overlay(
+                                    Circle()
+                                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
+                                )
+
+                            Image(systemName: isFav ? "heart.fill" : "heart")
+                                .font(.system(size: 12))
+                                .foregroundColor(
+                                    isFav
+                                        ? Color(hex: "#C5A455").opacity(0.85)
+                                        : .white.opacity(0.22)
+                                )
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 14)
+            .padding(.bottom, 12)
+
+            Divider()
+                .opacity(0.05)
+
+            HStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("MILES")
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.20))
+                        .kerning(1)
+
+                    HStack(alignment: .firstTextBaseline, spacing: 2) {
+                        Text(brandListMileage ?? "—")
+                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.70))
+
+                        if brandListMileage != nil {
+                            Text("mi")
+                                .font(.system(size: 9))
+                                .foregroundColor(.white.opacity(0.20))
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 14)
+
+                Divider()
+                    .frame(height: 28)
+                    .opacity(0.06)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("PRICE")
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.20))
+                        .kerning(1)
+
+                    Text(odoInfo?.privateValue.formatAsCurrency() ?? "—")
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundColor(odoInfo != nil ? .white.opacity(0.70) : .white.opacity(0.20))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 12)
+
+                Divider()
+                    .frame(height: 28)
+                    .opacity(0.06)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("ENGINE")
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.20))
+                        .kerning(1)
+
+                    Text(brandListEngine ?? "—")
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.65))
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 12)
+                .padding(.trailing, 14)
+            }
+            .padding(.vertical, 10)
+
+            Divider()
+                .opacity(0.05)
+
+            HStack(spacing: 6) {
+                if odoInfo == nil && !isFavoritesContext {
+                    Button(action: handleBidTap) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(Color(hex: "#C5A455"))
+                            Text("Bid")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(Color(hex: "#C5A455"))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 32)
+                        .background(Color(hex: "#C5A455").opacity(0.10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(Color(hex: "#C5A455").opacity(0.22), lineWidth: 0.5)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
+                }
+
+                ShareLink(item: shareText) {
+                    brandListSecondaryButtonLabel(icon: "square.and.arrow.up")
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+
+                if !isAddedToCalendar {
+                    Button(action: handleCalendarTap) {
+                        brandListSecondaryButtonLabel(icon: "calendar.badge.plus")
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
+                }
+
+                if hasStatVinAccess {
+                    Button(action: handleWebTap) {
+                        brandListSecondaryButtonLabel(
+                            icon: statVinIcon,
+                            tint: statVinLookupStatus == .unknown
+                                ? .white.opacity(0.38)
+                                : statVinButtonTint.opacity(0.85)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+            .padding(.bottom, 12)
+        }
+    }
+
+    private var standardBody: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // ── Header (always visible) — tap to expand/collapse ──────────
             HStack(alignment: .center, spacing: 8) {
                 if showBrandLogo, let asset = brandAssetName(for: displayMake) {
                     Image(asset)
@@ -364,18 +709,7 @@ struct VehicleCardView: View {
                 }
 
                 if showFavoriteButton {
-                    Button {
-                        haptic(.light)
-                        if isFav {
-                            supabaseService.removeFavoriteLocally(cardKey)
-                            supabaseService.syncRemoveFavorite(cardKey)
-                        } else {
-                            pendingFavoriteKey   = cardKey
-                            pendingFavoriteEntry = entry
-                            pendingFavoriteLabel = "\(yearStr) \(entry.make) \(entry.model) - \(entry.vin)"
-                            showFavoriteConfirm  = true
-                        }
-                    } label: {
+                    Button(action: handleFavoriteTap) {
                         Image(systemName: "star.fill")
                             .font(.subheadline)
                             .foregroundStyle(isFav ? AnyShapeStyle(primaryActionTint) : AnyShapeStyle(cardSecondaryTextColor))
@@ -389,12 +723,10 @@ struct VehicleCardView: View {
                 isExpanded.toggle()
             }
 
-            // ── Expanded content ───────────────────────────────────────────
             if isExpanded {
                 Divider()
                     .overlay(Color.primary.opacity(0.07))
 
-                // VIN row — tap to copy
                 Group {
                     if isFavoritesContext {
                         favoriteInlineValueRow(title: "VIN", value: entry.vin, systemImage: "tag.fill")
@@ -453,7 +785,6 @@ struct VehicleCardView: View {
                     }
                 }
 
-                // Odometer / inspection date / private value
                 if let odo = odoInfo {
                     if isFavoritesContext {
                         HStack(spacing: 10) {
@@ -560,63 +891,9 @@ struct VehicleCardView: View {
                     }
                 }
 
-                // Action buttons
                 HStack(spacing: 8) {
-                    // Hammer — extraction trigger
                     if odoInfo == nil {
-                        Button {
-                            let failStatus = VINFailureTracker.shared.status(for: cardKey)
-                            if !failStatus.canTry {
-                                UINotificationFeedbackGenerator().notificationOccurred(.error)
-                                extractionErrorMessage = failStatus.errorMessage
-                                showExtractionErrorAlert = true
-                                return
-                            }
-                            Task {
-                                let currentLimit = currentServerDailyLimit
-                                let currentUsage = supabaseService.currentProfile?.effectiveDailyUsage ?? 0
-                                let isUnlimited = currentLimit == Int.max
-
-                                if !isUnlimited && currentUsage >= currentLimit {
-                                    await MainActor.run {
-                                        UINotificationFeedbackGenerator().notificationOccurred(.error)
-                                        let limitStr = "\(currentLimit)"
-                                        isQuotaExceededAlert = true
-                                        if let offer = nextUpgradeOffer() {
-                                            let upgrade = "Upgrade to \(offer.name) to unlock up to \(offer.limit) daily extractions."
-                                            extractionErrorMessage = "You've reached your daily limit of \(limitStr). \(upgrade)"
-                                        } else {
-                                            extractionErrorMessage = "You've reached your daily limit of \(limitStr) for your current plan."
-                                        }
-                                        showExtractionErrorAlert = true
-                                    }
-                                    return
-                                }
-
-                                let limitStatus = await supabaseService.checkExtractionLimits(vin: cardKey)
-                                await MainActor.run {
-                                    if limitStatus.allowed {
-                                        haptic(.medium)
-                                        pendingExtractionEntry = entry
-                                        showLegalDisclaimer = true
-                                    } else {
-                                        UINotificationFeedbackGenerator().notificationOccurred(.error)
-                                        let limitStr = currentLimit == Int.max ? "Unlimited" : "\(currentLimit)"
-                                        isQuotaExceededAlert     = true
-                                        if nextUpgradeOffer() == nil {
-                                            extractionErrorMessage = "You've reached your daily limit of \(limitStr) for your current plan."
-                                        } else if let reason = limitStatus.reason {
-                                            extractionErrorMessage = reason
-                                        } else if let offer = nextUpgradeOffer() {
-                                            extractionErrorMessage = "You've reached your daily limit of \(limitStr). Upgrade to \(offer.name) to unlock up to \(offer.limit) daily extractions."
-                                        } else {
-                                            extractionErrorMessage = "You've reached your daily limit of \(limitStr) for your current plan."
-                                        }
-                                        showExtractionErrorAlert = true
-                                    }
-                                }
-                            }
-                        } label: {
+                        Button(action: handleBidTap) {
                             Image(systemName: "hammer.fill")
                         }
                         .buttonStyle(.borderedProminent)
@@ -632,12 +909,7 @@ struct VehicleCardView: View {
                     .frame(maxWidth: .infinity)
 
                     if !isAddedToCalendar {
-                        Button {
-                            haptic(.light)
-                            pendingCalendarEntry = entry
-                            pendingCalendarLabel = calendarEntryLabel
-                            showCalendarConfirm  = true
-                        } label: {
+                        Button(action: handleCalendarTap) {
                             Image(systemName: "calendar.badge.plus")
                         }
                         .buttonStyle(.bordered)
@@ -647,11 +919,8 @@ struct VehicleCardView: View {
 
                     if hasStatVinAccess {
                         VStack(spacing: 4) {
-                            Button {
-                                haptic(.light)
-                                showWebAlert = true
-                            } label: {
-                                Image(systemName: "globe")
+                            Button(action: handleWebTap) {
+                                Image(systemName: statVinIcon)
                             }
                             .buttonStyle(.bordered)
                             .tint(statVinButtonTint)
@@ -690,16 +959,38 @@ struct VehicleCardView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Body
+
+    var body: some View {
+        Group {
+            if layout == .brandList {
+                brandListBody
+            } else {
+                standardBody
+            }
+        }
         .font(.system(.subheadline))
-        .foregroundStyle(cardPrimaryTextColor)
-        .padding(16)
-        .background(cardSurfaceColor)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .foregroundStyle(layout == .brandList ? AnyShapeStyle(.white.opacity(0.82)) : AnyShapeStyle(cardPrimaryTextColor))
+        .padding(layout == .brandList ? 0 : 16)
+        .background(layout == .brandList ? Color(hex: "#111111") : cardSurfaceColor)
+        .clipShape(RoundedRectangle(cornerRadius: layout == .brandList ? 14 : 16, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(processed ? primaryActionTint.opacity(0.6) : cardBorderColor, lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: layout == .brandList ? 14 : 16, style: .continuous)
+                .stroke(
+                    layout == .brandList
+                        ? Color.white.opacity(0.08)
+                        : (processed ? primaryActionTint.opacity(0.6) : cardBorderColor),
+                    lineWidth: 0.5
+                )
         )
-        .shadow(color: .black.opacity(isFavoritesContext ? 0 : 0.24), radius: isFavoritesContext ? 0 : 12, x: 0, y: 6)
+        .shadow(
+            color: .black.opacity(layout == .brandList || isFavoritesContext ? 0 : 0.24),
+            radius: layout == .brandList || isFavoritesContext ? 0 : 12,
+            x: 0,
+            y: 6
+        )
         .task(id: cardKey) {
             guard shouldLoadVINCacheOnAppear else { return }
             await supabaseService.loadNHTSACacheForVIN(cardKey)
@@ -771,14 +1062,24 @@ struct VehicleCardView: View {
             }
         }
 
-        .alert("Open stat.vin", isPresented: $showWebAlert) {
-            Button("Cancel", role: .cancel) {}
-            Button("Open Report") {
-                if let url = URL(string: "https://stat.vin/cars/\(entry.vin)") {
-                    statVinURL = url
+        .fullScreenCover(isPresented: $showStatVinFlow) {
+            StatVinFlowView(
+                vin: entry.vin,
+                cardKey: cardKey,
+                initialFlowState: statVinLookupStatus == .noHistory ? .noPhotos : .confirming,
+                onSaveResult: { resolvedURL in
+                    let status = Self.statVinStatus(for: resolvedURL)
+                    guard status != .unknown else { return }
+                    Task {
+                        await supabaseService.saveStatVinLookupResult(
+                            forVIN: cardKey,
+                            status: status,
+                            resolvedURL: resolvedURL
+                        )
+                    }
                 }
-            }
-        } message: { Text("Do you want to view the report for this VIN?") }
+            )
+        }
 
         .sheet(isPresented: Binding(get: { statVinURL != nil }, set: { if !$0 { statVinURL = nil } })) {
             if let url = statVinURL {
@@ -1162,7 +1463,7 @@ struct ExtractionFlowView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var supabaseService: SupabaseService
 
-    enum ExState: Equatable { case fetchingOdometer, waitingForCaptcha, fetchingPrice }
+    enum ExState: Equatable { case fetchingOdometer, waitingForCaptcha, fetchingPrice, success, failed }
 
     @State private var exState:           ExState = .fetchingOdometer
     @State private var cancelToken:       UUID    = UUID()
@@ -1172,6 +1473,15 @@ struct ExtractionFlowView: View {
     @State private var spvOdo:            String? = nil
     @State private var errorMessage:      String? = nil
     @State private var showErrorAlert:    Bool    = false
+    @State private var glowPulse:         Bool    = false
+    @State private var shimmerX:          CGFloat = -60
+    @State private var contentOpacity:    Double  = 0
+    @State private var addedToFavorites:  Bool    = false
+    @State private var heartScale:        CGFloat = 1.0
+
+    private let gold = Color(hex: "#C5A455")
+    private var cardKey: String { normalizeVIN(entry.vin) }
+    private var isAlreadyFavorite: Bool { supabaseService.favorites.contains(cardKey) }
 
     init(entry: HPDEntry, lastProcessedVIN: Binding<String?>) {
         self.entry            = entry
@@ -1181,42 +1491,310 @@ struct ExtractionFlowView: View {
 
     var body: some View {
         ZStack {
-            // Dim backdrop
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .ignoresSafeArea()
+            // Dark background
+            Color(hex: "#0A0A0A").ignoresSafeArea()
+
+            // Gold grid
+            Canvas { ctx, size in
+                let spacing: CGFloat = 36
+                var path = Path()
+                var x: CGFloat = 0
+                while x <= size.width {
+                    path.move(to: .init(x: x, y: 0))
+                    path.addLine(to: .init(x: x, y: size.height))
+                    x += spacing
+                }
+                var y: CGFloat = 0
+                while y <= size.height {
+                    path.move(to: .init(x: 0, y: y))
+                    path.addLine(to: .init(x: size.width, y: y))
+                    y += spacing
+                }
+                ctx.stroke(path, with: .color(gold.opacity(0.035)), lineWidth: 0.5)
+            }
+            .ignoresSafeArea()
+
+            // Pulsing radial glow
+            RadialGradient(
+                colors: [gold.opacity(0.10), .clear],
+                center: .center,
+                startRadius: 0,
+                endRadius: 300
+            )
+            .scaleEffect(glowPulse ? 1.12 : 0.88)
+            .animation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true), value: glowPulse)
+            .ignoresSafeArea()
 
             if exState == .waitingForCaptcha {
                 VStack {
                     Text("Please check the CAPTCHA box and press the blue Submit button below!")
                         .font(.headline)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
+                        .foregroundColor(.white.opacity(0.88))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 12)
                         .background(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color(uiColor: .systemBackground).opacity(0.9))
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(Color(hex: "#1A1A1A"))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
+                                )
                         )
                         .padding(.top, 18)
+                        .padding(.horizontal, 14)
                     Spacer()
                 }
             } else {
-                VStack(spacing: 12) {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle())
-                        .scaleEffect(1.15)
+                VStack(spacing: 0) {
+                    LoneStarView(gold: gold)
+                        .frame(width: 38, height: 38)
+                        .shadow(color: gold.opacity(0.40), radius: 14)
+                        .padding(.bottom, 22)
+
+                    Text("\(entry.year) \(entry.make) \(entry.model)".uppercased())
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.30))
+                        .kerning(1.4)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.bottom, 8)
+
                     Text(overlayMessage)
-                        .font(.headline)
-                    Text(mileageVIN)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Button("Cancel", role: .cancel) { dismiss() }
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundColor(.white)
+                        .kerning(-0.6)
+                        .multilineTextAlignment(.center)
+                        .padding(.bottom, 26)
+
+                    if exState == .success {
+                        // Success state
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 40))
+                            .foregroundColor(gold)
+                            .shadow(color: gold.opacity(0.5), radius: 12)
+                            .padding(.bottom, 20)
+
+                        // Obtained data cards
+                        let resultInfo = supabaseService.odoByVIN[mileageVIN]
+                        HStack(spacing: 10) {
+                            VStack(spacing: 4) {
+                                Text("ODOMETER")
+                                    .font(.system(size: 8.5, weight: .semibold))
+                                    .foregroundColor(.white.opacity(0.28))
+                                    .kerning(1.2)
+                                Text(resultInfo?.odometer.formatWithCommas() ?? "—")
+                                    .font(.system(size: 18, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.white.opacity(0.88))
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.75)
+                                Text("miles")
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.22))
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(Color.white.opacity(0.05))
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
+                            )
+
+                            VStack(spacing: 4) {
+                                Text("VALUE")
+                                    .font(.system(size: 8.5, weight: .semibold))
+                                    .foregroundColor(.white.opacity(0.28))
+                                    .kerning(1.2)
+                                Text(resultInfo?.privateValue?.formatAsCurrency() ?? "—")
+                                    .font(.system(size: 18, weight: .bold, design: .monospaced))
+                                    .foregroundColor(gold.opacity(0.90))
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.75)
+                                Text("private")
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.22))
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(gold.opacity(0.07))
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .strokeBorder(gold.opacity(0.18), lineWidth: 0.5)
+                            )
+                        }
+                        .padding(.bottom, 20)
+
+                        Text(mileageVIN)
+                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.20))
+                            .kerning(0.4)
+                            .padding(.bottom, 22)
+
+                        if addedToFavorites {
+                            // Post-add confirmation
+                            VStack(spacing: 14) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "heart.fill")
+                                        .font(.system(size: 20))
+                                        .foregroundColor(gold)
+                                        .scaleEffect(heartScale)
+                                    Text("Added to Favorites!")
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundColor(gold)
+                                }
+
+                                Button { dismiss() } label: {
+                                    Text("OK")
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundColor(Color(hex: "#0A0A0A"))
+                                        .padding(.horizontal, 48)
+                                        .padding(.vertical, 12)
+                                        .background(gold)
+                                        .clipShape(Capsule())
+                                        .shadow(color: gold.opacity(0.35), radius: 8)
+                                }
+                            }
+                        } else if isAlreadyFavorite {
+                            Button { dismiss() } label: {
+                                Text("OK")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundColor(Color(hex: "#0A0A0A"))
+                                    .padding(.horizontal, 48)
+                                    .padding(.vertical, 12)
+                                    .background(gold)
+                                    .clipShape(Capsule())
+                                    .shadow(color: gold.opacity(0.35), radius: 8)
+                            }
+                        } else {
+                            // Offer to add to favorites
+                            VStack(spacing: 10) {
+                                Text("Save to favorites?")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.36))
+
+                                HStack(spacing: 12) {
+                                    Button {
+                                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                        supabaseService.addFavoriteLocally(cardKey)
+                                        supabaseService.syncUpsertFavorite(entry: entry)
+                                        withAnimation(.interpolatingSpring(stiffness: 180, damping: 10)) {
+                                            addedToFavorites = true
+                                            heartScale = 1.4
+                                        }
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                            withAnimation(.easeOut(duration: 0.3)) {
+                                                heartScale = 1.0
+                                            }
+                                        }
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: "heart.fill")
+                                            Text("Add to Favorites")
+                                        }
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(Color(hex: "#0A0A0A"))
+                                        .padding(.horizontal, 20)
+                                        .padding(.vertical, 11)
+                                        .background(gold)
+                                        .clipShape(Capsule())
+                                        .shadow(color: gold.opacity(0.30), radius: 6)
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    Button { dismiss() } label: {
+                                        Text("Skip")
+                                            .font(.system(size: 14, weight: .medium))
+                                            .foregroundColor(.white.opacity(0.38))
+                                            .padding(.horizontal, 20)
+                                            .padding(.vertical, 11)
+                                            .background(Color.white.opacity(0.07))
+                                            .clipShape(Capsule())
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+
+                    } else if exState == .failed {
+                        // Error state
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 38))
+                            .foregroundColor(.red.opacity(0.80))
+                            .padding(.bottom, 16)
+
+                        Text(mileageVIN)
+                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.22))
+                            .kerning(0.4)
+                            .padding(.bottom, 30)
+
+                        Button { dismiss() } label: {
+                            Text("Close")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.white.opacity(0.55))
+                                .padding(.horizontal, 30)
+                                .padding(.vertical, 10)
+                                .background(Color.white.opacity(0.09))
+                                .clipShape(Capsule())
+                        }
+                    } else {
+                        // Loading shimmer bar
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(Color.white.opacity(0.08))
+                                .frame(width: 180, height: 5)
+
+                            Capsule()
+                                .fill(LinearGradient(
+                                    colors: [gold.opacity(0), gold.opacity(0.90), gold.opacity(0)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                ))
+                                .frame(width: 70, height: 5)
+                                .offset(x: shimmerX)
+                                .clipped()
+                        }
+                        .frame(width: 180)
+                        .clipShape(Capsule())
+                        .overlay {
+                            Capsule()
+                                .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
+                                .frame(width: 180, height: 5)
+                        }
+                        .padding(.bottom, 14)
+
+                        // Step dots
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(exState == .fetchingOdometer ? gold : gold.opacity(0.28))
+                                .frame(width: 5, height: 5)
+                            Circle()
+                                .fill(exState == .fetchingPrice ? gold : gold.opacity(0.18))
+                                .frame(width: 5, height: 5)
+                        }
+                        .padding(.bottom, 26)
+
+                        Text(mileageVIN)
+                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.22))
+                            .kerning(0.4)
+                            .padding(.bottom, 36)
+
+                        Button { dismiss() } label: {
+                            Text("Cancel")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.white.opacity(0.35))
+                                .padding(.horizontal, 30)
+                                .padding(.vertical, 10)
+                                .background(Color.white.opacity(0.07))
+                                .clipShape(Capsule())
+                        }
+                    }
                 }
-                .padding(20)
-                .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(Color(uiColor: .systemBackground).opacity(0.85))
-                )
-                .padding(20)
+                .opacity(contentOpacity)
+                .padding(.horizontal, 32)
             }
 
             // MileageWebView — hidden when fetching, visible at height 500 for captcha
@@ -1239,6 +1817,7 @@ struct ExtractionFlowView: View {
                 .padding(.horizontal, 14)
                 .allowsHitTesting(exState == .waitingForCaptcha)
                 .opacity(exState == .waitingForCaptcha ? 1 : 0)
+                .opacity(exState == .success || exState == .failed ? 0 : 1)
             }
 
             // SPVWebView — always zero-sized, runs silently in background
@@ -1258,16 +1837,24 @@ struct ExtractionFlowView: View {
                 .allowsHitTesting(false)
             }
         }
-        .animation(.snappy, value: exState)
+        .animation(.easeInOut(duration: 0.35), value: exState)
         .onAppear {
+            glowPulse = true
+            withAnimation(.easeOut(duration: 0.5)) { contentOpacity = 1 }
+            withAnimation(.linear(duration: 1.3).repeatForever(autoreverses: false)) {
+                shimmerX = 180
+            }
             Task {
-                if await supabaseService.loadQuickDataCacheFromSupabase(forVIN: mileageVIN) {
+                async let cacheResult = supabaseService.loadQuickDataCacheFromSupabase(forVIN: mileageVIN)
+                async let minDelay: Void = Task.sleep(nanoseconds: 1_500_000_000)
+                let (hit, _) = await (cacheResult, try? minDelay)
+                if hit {
                     await supabaseService.incrementQuota(vin: mileageVIN)
                     await MainActor.run {
-                        UINotificationFeedbackGenerator().notificationOccurred(.success)
                         VINFailureTracker.shared.clearFailures(vin: mileageVIN)
                         lastProcessedVIN = mileageVIN
-                        dismiss()
+                        exState = .success
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
                     }
                     return
                 }
@@ -1277,24 +1864,28 @@ struct ExtractionFlowView: View {
                 }
             }
         }
-        .alert("Extraction Failed", isPresented: $showErrorAlert) {
-            Button("OK", role: .cancel) { dismiss() }
-        } message: { Text(errorMessage ?? "") }
     }
 
     // MARK: - Private
 
     private var overlayMessage: String {
         switch exState {
-        case .fetchingOdometer:  return "Fetching odometer data..."
-        case .waitingForCaptcha: return "Please solve the CAPTCHA..."
+        case .fetchingOdometer:  return "Fetching odometer..."
+        case .waitingForCaptcha: return "Solve the CAPTCHA"
         case .fetchingPrice:     return "Fetching private value..."
+        case .success:           return "Data loaded!"
+        case .failed:            return errorMessage ?? "Something went wrong."
         }
     }
 
     private func handleOdo(odo: String, date: String, realModel: String?) {
         DispatchQueue.main.async {
             guard !mileageVIN.isEmpty else { return }
+            guard self.exState == .fetchingOdometer || self.exState == .waitingForCaptcha else {
+                print("[ExtractionFlow] handleOdo IGNORED — exState=\(self.exState) odo=\(odo)")
+                return
+            }
+            print("[ExtractionFlow] handleOdo OK — odo=\(odo) date=\(date)")
             var info = supabaseService.odoByVIN[mileageVIN] ?? OdoInfo(odometer: "", testDate: "", privateValue: nil)
             info.odometer = odo
             info.testDate = date.dateOnly
@@ -1309,6 +1900,11 @@ struct ExtractionFlowView: View {
 
     private func handlePrice(_ price: String) {
         DispatchQueue.main.async {
+            guard self.exState == .fetchingPrice else {
+                print("[ExtractionFlow] handlePrice IGNORED — exState=\(self.exState) price=\(price)")
+                return
+            }
+            print("[ExtractionFlow] handlePrice OK — price=\(price)")
             if let v = spvVIN, var info = supabaseService.odoByVIN[v] {
                 info.privateValue = price
                 supabaseService.setOdoInfo(info, forVIN: v)
@@ -1319,15 +1915,22 @@ struct ExtractionFlowView: View {
                 }
                 lastProcessedVIN = v
             }
-            dismiss()
+            exState = .success
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
         }
     }
 
     private func fail(_ message: String) {
         DispatchQueue.main.async {
+            guard self.exState != .success && self.exState != .failed else {
+                print("[ExtractionFlow] fail IGNORED — exState=\(self.exState) msg=\(message)")
+                return
+            }
+            print("[ExtractionFlow] fail FIRED — exState=\(self.exState) msg=\(message)")
             if !mileageVIN.isEmpty { VINFailureTracker.shared.recordFailure(vin: mileageVIN) }
-            errorMessage   = message
-            showErrorAlert = true
+            errorMessage = message
+            exState = .failed
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
         }
     }
 
@@ -1337,18 +1940,216 @@ struct ExtractionFlowView: View {
             try? await Task.sleep(nanoseconds: 8_000_000_000)
             await MainActor.run {
                 guard self.cancelToken == token, self.exState == state else { return }
-                if !self.mileageVIN.isEmpty {
-                    VINFailureTracker.shared.recordFailure(vin: self.mileageVIN)
-                }
                 switch state {
                 case .fetchingOdometer:
-                    self.errorMessage = "Odometer Fetch Failed: No recent mileage information was found from the last inspection, or the state server is currently unavailable."
+                    self.fail("Odometer Fetch Failed: No recent mileage information was found from the last inspection, or the state server is currently unavailable.")
                 case .fetchingPrice:
-                    self.errorMessage = "Value Fetch Failed: The DMV valuation server timed out. The vehicle might not have a calculable private party value at this time."
+                    self.fail("Value Fetch Failed: The DMV valuation server timed out. The vehicle might not have a calculable private party value at this time.")
                 case .waitingForCaptcha:
-                    self.errorMessage = "Extraction timed out after 8 seconds. Please check your connection and try again."
+                    self.fail("Extraction timed out. Please check your connection and try again.")
+                case .success, .failed:
+                    break
                 }
-                self.showErrorAlert = true
+            }
+        }
+    }
+}
+
+// MARK: - StatVinFlowView
+//
+// Shown instead of an alert when the user taps the globe/photo button.
+// - .confirming  → dark/gold intro screen asking if they want to search history
+// - .noPhotos    → dark/gold result screen shown when no photos were found
+//   (also shown immediately on subsequent taps when status is already .noHistory)
+// When the browser resolves to noHistory it dismisses itself and transitions to .noPhotos.
+// When status is .hasHistory the card opens the browser directly, bypassing this view.
+
+struct StatVinFlowView: View {
+
+    enum FlowState { case confirming, noPhotos }
+
+    let vin: String
+    let cardKey: String
+    let onSaveResult: (URL) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var flowState: FlowState
+    @State private var showBrowser = false
+    @State private var glowPulse  = false
+    @State private var contentOpacity: Double = 0
+
+    private let gold = Color(hex: "#C5A455")
+
+    init(
+        vin: String,
+        cardKey: String,
+        initialFlowState: FlowState,
+        onSaveResult: @escaping (URL) -> Void
+    ) {
+        self.vin          = vin
+        self.cardKey      = cardKey
+        self.onSaveResult = onSaveResult
+        _flowState        = State(initialValue: initialFlowState)
+    }
+
+    var body: some View {
+        ZStack {
+            Color(hex: "#0A0A0A").ignoresSafeArea()
+
+            Canvas { ctx, size in
+                let spacing: CGFloat = 36
+                var path = Path()
+                var x: CGFloat = 0
+                while x <= size.width {
+                    path.move(to: .init(x: x, y: 0))
+                    path.addLine(to: .init(x: x, y: size.height))
+                    x += spacing
+                }
+                var y: CGFloat = 0
+                while y <= size.height {
+                    path.move(to: .init(x: 0, y: y))
+                    path.addLine(to: .init(x: size.width, y: y))
+                    y += spacing
+                }
+                ctx.stroke(path, with: .color(gold.opacity(0.035)), lineWidth: 0.5)
+            }
+            .ignoresSafeArea()
+
+            RadialGradient(
+                colors: [gold.opacity(0.10), .clear],
+                center: .center,
+                startRadius: 0,
+                endRadius: 300
+            )
+            .scaleEffect(glowPulse ? 1.12 : 0.88)
+            .animation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true), value: glowPulse)
+            .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                LoneStarView(gold: gold)
+                    .frame(width: 38, height: 38)
+                    .shadow(color: gold.opacity(0.40), radius: 14)
+                    .padding(.bottom, 28)
+
+                if flowState == .confirming {
+                    Text("AUCTION HISTORY")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.28))
+                        .kerning(1.8)
+                        .padding(.bottom, 10)
+
+                    Text("Search for Photos")
+                        .font(.system(size: 24, weight: .bold))
+                        .foregroundColor(.white)
+                        .kerning(-0.6)
+                        .padding(.bottom, 16)
+
+                    Text("We'll check this vehicle's auction history to find any photos reported during previous auctions.")
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.42))
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(4)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 40)
+
+                    HStack(spacing: 12) {
+                        Button { showBrowser = true } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "magnifyingglass")
+                                Text("Search History")
+                            }
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(Color(hex: "#0A0A0A"))
+                            .padding(.horizontal, 22)
+                            .padding(.vertical, 12)
+                            .background(gold)
+                            .clipShape(Capsule())
+                            .shadow(color: gold.opacity(0.35), radius: 8)
+                        }
+                        .buttonStyle(.plain)
+
+                        Button { dismiss() } label: {
+                            Text("Not Now")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.white.opacity(0.38))
+                                .padding(.horizontal, 22)
+                                .padding(.vertical, 12)
+                                .background(Color.white.opacity(0.07))
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                } else {
+                    // noPhotos state
+                    ZStack(alignment: .bottomTrailing) {
+                        Image(systemName: "photo.fill")
+                            .font(.system(size: 42))
+                            .foregroundColor(.white.opacity(0.13))
+                        Circle()
+                            .fill(Color(hex: "#0A0A0A"))
+                            .frame(width: 24, height: 24)
+                            .overlay(
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 22))
+                                    .foregroundColor(.red.opacity(0.65))
+                            )
+                            .offset(x: 8, y: 8)
+                    }
+                    .padding(.bottom, 24)
+
+                    Text("NO PHOTOS FOUND")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.28))
+                        .kerning(1.8)
+                        .padding(.bottom, 10)
+
+                    Text("No auction photos were found for this vehicle in its reported history record.")
+                        .font(.system(size: 14))
+                        .foregroundColor(.white.opacity(0.42))
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(4)
+                        .padding(.horizontal, 28)
+                        .padding(.bottom, 36)
+
+                    Text(vin)
+                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.20))
+                        .kerning(0.4)
+                        .padding(.bottom, 30)
+
+                    Button { dismiss() } label: {
+                        Text("OK")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(Color(hex: "#0A0A0A"))
+                            .padding(.horizontal, 48)
+                            .padding(.vertical, 12)
+                            .background(gold)
+                            .clipShape(Capsule())
+                            .shadow(color: gold.opacity(0.35), radius: 8)
+                    }
+                }
+            }
+            .opacity(contentOpacity)
+            .padding(.horizontal, 32)
+        }
+        .animation(.easeInOut(duration: 0.35), value: flowState)
+        .onAppear {
+            glowPulse = true
+            withAnimation(.easeOut(duration: 0.5)) { contentOpacity = 1 }
+        }
+        .sheet(isPresented: $showBrowser) {
+            if let url = URL(string: "https://stat.vin/cars/\(vin)") {
+                StatVinBrowserView(initialURL: url) { resolvedURL in
+                    onSaveResult(resolvedURL)
+                    if resolvedURL.absoluteString.lowercased().contains("stat.vin/vin-decoding/") {
+                        DispatchQueue.main.async {
+                            showBrowser = false
+                            withAnimation(.easeInOut(duration: 0.35)) { flowState = .noPhotos }
+                        }
+                    }
+                }
+                .ignoresSafeArea()
             }
         }
     }

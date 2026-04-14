@@ -1,4 +1,23 @@
 import SwiftUI
+import UIKit
+
+// MARK: - Swipe-back gesture re-enabler (needed when navigationBarBackButtonHidden is true)
+private struct SwipeBackEnabler: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> UIViewController {
+        let vc = UIViewController()
+        DispatchQueue.main.async {
+            vc.navigationController?.interactivePopGestureRecognizer?.isEnabled = true
+            vc.navigationController?.interactivePopGestureRecognizer?.delegate = nil
+        }
+        return vc
+    }
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
+        DispatchQueue.main.async {
+            uiViewController.navigationController?.interactivePopGestureRecognizer?.isEnabled = true
+            uiViewController.navigationController?.interactivePopGestureRecognizer?.delegate = nil
+        }
+    }
+}
 
 // MARK: - FilteredAuctionListView
 //
@@ -19,10 +38,12 @@ struct FilteredAuctionListView: View {
     @AppStorage("nhtsaDecodedCount") private var decodedCount: Int = 0
     @AppStorage("nhtsaTotalToDecode") private var totalToDecode: Int = 0
     @AppStorage("nhtsaIsDecoding") private var isDecoding: Bool = false
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var supabaseService: SupabaseService
     @EnvironmentObject private var storeManager:   StoreManager
 
     @State private var searchText: String
+    @State private var showDataInfo = false
 
     init(
         date: String,
@@ -105,6 +126,21 @@ struct FilteredAuctionListView: View {
         return location
     }
 
+    private var navigationBrandName: String {
+        baseTitle
+    }
+
+    private func paletteColor(_ hex: String) -> Color {
+        let cleaned = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var value: UInt64 = 0
+        Scanner(string: cleaned).scanHexInt64(&value)
+
+        let r = Double((value >> 16) & 0xFF) / 255
+        let g = Double((value >> 8) & 0xFF) / 255
+        let b = Double(value & 0xFF) / 255
+        return Color(red: r, green: g, blue: b)
+    }
+
     private var emptyStateBrandLabel: String {
         if let brand {
             return brandDisplayName(for: brand)
@@ -132,44 +168,111 @@ struct FilteredAuctionListView: View {
                         Text("No vehicles match \"\(searchText)\".")
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List {
-                    if isDecoding {
-                        Section {
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        if isDecoding {
                             VStack(alignment: .leading, spacing: 8) {
                                 ProgressView(
                                     value: Double(decodedCount),
                                     total: Double(max(totalToDecode, 1))
                                 )
+                                .tint(paletteColor("#C5A455"))
+
                                 Text("Decoding VINs: \(decodedCount)/\(totalToDecode)")
                                     .font(.footnote.weight(.semibold))
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.white.opacity(0.65))
                             }
-                            .padding(.vertical, 6)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(14)
+                            .background(paletteColor("#111111"))
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
+                            )
                         }
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                    }
 
-                    ForEach(displayedVehicles) { entry in
-                        VehicleCardView(
-                            entry: entry,
-                            showAddress: false,
-                            showQuickInventory: false,
-                            showBrandLogo: false,
-                            shouldLoadVINCacheOnAppear: false,
-                            initiallyExpanded: true
-                        )
-                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
+                        ForEach(displayedVehicles) { entry in
+                            VehicleCardView(
+                                entry: entry,
+                                showAddress: false,
+                                showQuickInventory: false,
+                                showBrandLogo: false,
+                                shouldLoadVINCacheOnAppear: false,
+                                layout: .brandList,
+                                initiallyExpanded: true
+                            )
+                        }
                     }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 12)
+                    .padding(.bottom, 20)
                 }
-                .listStyle(.plain)
             }
         }
+        .background(paletteColor("#0A0A0A").ignoresSafeArea())
         .searchable(text: $searchText, prompt: "Search VIN, Year, Brand or Model")
-        .navigationTitle("\(baseTitle.uppercased()) (\(displayedVehicles.count))")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    dismiss()
+                } label: {
+                    ZStack {
+                        Circle()
+                            .fill(paletteColor("#1A1A1A"))
+                            .frame(width: 34, height: 34)
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.white.opacity(0.55))
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+
+            ToolbarItem(placement: .principal) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(navigationBrandName.uppercased())
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.20))
+                        .kerning(1.5)
+                    Text("\(displayedVehicles.count) vehicles")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.82))
+                        .kerning(-0.3)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showDataInfo = true
+                } label: {
+                    ZStack {
+                        Circle()
+                            .fill(paletteColor("#1A1A1A"))
+                            .frame(width: 34, height: 34)
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.white.opacity(0.55))
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .navigationBarBackButtonHidden(true)
+        .background(SwipeBackEnabler().frame(width: 0, height: 0))
+        .toolbarBackground(paletteColor("#0A0A0A"), for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .alert("Data Information", isPresented: $showDataInfo) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            let limit = supabaseService.currentServerDailyLimit
+            let limitStr = limit == Int.max ? "unlimited" : "\(limit)"
+            Text("• Mileage: Last recorded odometer during state inspection.\n• Value: Estimated DMV Private Party Value.\n\nUSAGE LIMITS:\nYou are limited to \(limitStr) successful data extractions per day, and a maximum of 3 per vehicle. Failed attempts do not count.\n\nNOTE: Historical data from third-party public records. Accuracy not guaranteed.")
+        }
     }
 }

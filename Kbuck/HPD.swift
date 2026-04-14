@@ -2230,6 +2230,7 @@ struct HPDView: View {
             showQuickInventory: false,
             showFavoriteButton: false,
             isFavoritesContext: true,
+            layout: .brandList,
             initiallyExpanded: true
         )
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -2264,7 +2265,7 @@ struct HPDView: View {
             } label: {
                 ZStack {
                     Circle()
-                        .fill(Color(.tertiarySystemBackground))
+                        .fill(Color(hex: "#1A1A1A"))
                         .frame(width: 34, height: 34)
                     Image("applemaps")
                         .resizable()
@@ -2274,7 +2275,7 @@ struct HPDView: View {
                 }
                 .overlay {
                     Circle()
-                        .stroke(Color.primary.opacity(0.10), lineWidth: 0.5)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
                 }
             }
             .buttonStyle(.plain)
@@ -2283,7 +2284,7 @@ struct HPDView: View {
                 HStack(spacing: 8) {
                     Text(title)
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.primary.opacity(0.84))
+                        .foregroundStyle(Color.white.opacity(0.88))
                         .lineLimit(1)
                         .minimumScaleFactor(0.78)
                         .allowsTightening(true)
@@ -2298,7 +2299,7 @@ struct HPDView: View {
                     }
                 }
                 .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(Color.primary.opacity(0.38))
+                .foregroundStyle(Color.white.opacity(0.28))
                 .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -2311,7 +2312,7 @@ struct HPDView: View {
 
             Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                 .font(.system(size: 10, weight: .regular))
-                .foregroundStyle(Color.primary.opacity(0.32))
+                .foregroundStyle(Color.white.opacity(0.32))
                 .fixedSize()
         }
         .contentShape(Rectangle())
@@ -2320,14 +2321,14 @@ struct HPDView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
-        .padding(.vertical, 14)
-        .background(Color(hex: "#C5A455").opacity(0.05))
+        .padding(.vertical, 10)
+        .background(Color(hex: "#111111"))
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.primary.opacity(0.10), lineWidth: 0.5)
+                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
         }
-        .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 0, trailing: 16))
+        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 0, trailing: 16))
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
     }
@@ -2335,7 +2336,7 @@ struct HPDView: View {
     @ViewBuilder
     private func favoriteLocationSpacerRow() -> some View {
         Color.clear
-            .frame(height: 6)
+            .frame(height: 0)
             .listRowInsets(EdgeInsets())
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
@@ -2656,9 +2657,17 @@ struct HPDView: View {
                 .padding(.top, 14)
                 .padding(.horizontal, 22)
 
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 78), spacing: 10)], spacing: 10) {
-                    ForEach(filteredFavoriteLocationOptions, id: \.address) { option in
-                        favoriteLocationFilterChip(title: option.title, address: option.address, count: option.count)
+                let locationChunks = stride(from: 0, to: filteredFavoriteLocationOptions.count, by: 3).map {
+                    Array(filteredFavoriteLocationOptions[$0..<min($0 + 3, filteredFavoriteLocationOptions.count)])
+                }
+                VStack(spacing: 10) {
+                    ForEach(Array(locationChunks.enumerated()), id: \.offset) { _, row in
+                        HStack(spacing: 10) {
+                            ForEach(row, id: \.address) { option in
+                                favoriteLocationFilterChip(title: option.title, address: option.address, count: option.count)
+                                    .frame(maxWidth: .infinity)
+                            }
+                        }
                     }
                 }
                 .padding(.top, 14)
@@ -2889,19 +2898,21 @@ struct HPDView: View {
             recomputeFilteredEntries()
         }
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showQuotaSheet = true
-                } label: {
-                    let tierKey = supabaseService.serverTierKey
-                    if UIImage(named: tierKey) != nil {
-                        Image(tierKey)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 30, height: 30)
-                    } else {
-                        Image(systemName: "star.shield.fill")
-                            .font(.title2)
+            if !favoritesOnly {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showQuotaSheet = true
+                    } label: {
+                        let tierKey = supabaseService.serverTierKey
+                        if UIImage(named: tierKey) != nil {
+                            Image(tierKey)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 30, height: 30)
+                        } else {
+                            Image(systemName: "star.shield.fill")
+                                .font(.title2)
+                        }
                     }
                 }
             }
