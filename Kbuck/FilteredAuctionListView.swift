@@ -39,6 +39,7 @@ struct FilteredAuctionListView: View {
     @AppStorage("nhtsaTotalToDecode") private var totalToDecode: Int = 0
     @AppStorage("nhtsaIsDecoding") private var isDecoding: Bool = false
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var supabaseService: SupabaseService
     @EnvironmentObject private var storeManager:   StoreManager
 
@@ -151,68 +152,79 @@ struct FilteredAuctionListView: View {
         return "Any"
     }
 
+    private var chromeSurface: Color {
+        colorScheme == .dark ? Color.white.opacity(0.06) : Color.white.opacity(0.74)
+    }
+
+    private var chromeMutedSurface: Color {
+        Color.primary.opacity(colorScheme == .dark ? 0.09 : 0.05)
+    }
+
     // MARK: - Body
 
     var body: some View {
-        Group {
-            if displayedVehicles.isEmpty {
-                ContentUnavailableView {
-                    Label(
-                        searchText.isEmpty ? "No Vehicles Found" : "No Results",
-                        systemImage: "magnifyingglass"
-                    )
-                } description: {
-                    if searchText.isEmpty {
-                        Text("No \(emptyStateBrandLabel) vehicles found at this location for \(date).")
-                    } else {
-                        Text("No vehicles match \"\(searchText)\".")
+        ZStack {
+            AppChromeBackground()
+
+            Group {
+                if displayedVehicles.isEmpty {
+                    ContentUnavailableView {
+                        Label(
+                            searchText.isEmpty ? "No Vehicles Found" : "No Results",
+                            systemImage: "magnifyingglass"
+                        )
+                    } description: {
+                        if searchText.isEmpty {
+                            Text("No \(emptyStateBrandLabel) vehicles found at this location for \(date).")
+                        } else {
+                            Text("No vehicles match \"\(searchText)\".")
+                        }
                     }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        if isDecoding {
-                            VStack(alignment: .leading, spacing: 8) {
-                                ProgressView(
-                                    value: Double(decodedCount),
-                                    total: Double(max(totalToDecode, 1))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 10) {
+                            if isDecoding {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ProgressView(
+                                        value: Double(decodedCount),
+                                        total: Double(max(totalToDecode, 1))
+                                    )
+                                    .tint(paletteColor("#C5A455"))
+
+                                    Text("Decoding VINs: \(decodedCount)/\(totalToDecode)")
+                                        .font(.footnote.weight(.semibold))
+                                        .foregroundStyle(Color.primary.opacity(0.65))
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(14)
+                                .background(chromeSurface)
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.08), lineWidth: 0.5)
                                 )
-                                .tint(paletteColor("#C5A455"))
-
-                                Text("Decoding VINs: \(decodedCount)/\(totalToDecode)")
-                                    .font(.footnote.weight(.semibold))
-                                    .foregroundStyle(Color.primary.opacity(0.65))
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(14)
-                            .background(Color(.secondarySystemBackground))
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
-                            )
-                        }
 
-                        ForEach(displayedVehicles) { entry in
-                            VehicleCardView(
-                                entry: entry,
-                                showAddress: false,
-                                showQuickInventory: false,
-                                showBrandLogo: false,
-                                shouldLoadVINCacheOnAppear: false,
-                                layout: .brandList,
-                                initiallyExpanded: true
-                            )
+                            ForEach(displayedVehicles) { entry in
+                                VehicleCardView(
+                                    entry: entry,
+                                    showAddress: false,
+                                    showQuickInventory: false,
+                                    showBrandLogo: false,
+                                    shouldLoadVINCacheOnAppear: false,
+                                    layout: .brandList,
+                                    initiallyExpanded: true
+                                )
+                            }
                         }
+                        .padding(.horizontal, 14)
+                        .padding(.top, 12)
+                        .padding(.bottom, 20)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.top, 12)
-                    .padding(.bottom, 20)
                 }
             }
         }
-        .background(Color(.systemBackground).ignoresSafeArea())
         .searchable(text: $searchText, prompt: "Search VIN, Year, Brand or Model")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -222,7 +234,7 @@ struct FilteredAuctionListView: View {
                 } label: {
                     ZStack {
                         Circle()
-                            .fill(Color(.secondarySystemBackground))
+                            .fill(chromeMutedSurface)
                             .frame(width: 34, height: 34)
                         Image(systemName: "chevron.left")
                             .font(.system(size: 12, weight: .medium))
@@ -252,7 +264,7 @@ struct FilteredAuctionListView: View {
                 } label: {
                     ZStack {
                         Circle()
-                            .fill(Color(.secondarySystemBackground))
+                            .fill(chromeMutedSurface)
                             .frame(width: 34, height: 34)
                         Image(systemName: "info.circle")
                             .font(.system(size: 12, weight: .medium))
@@ -264,7 +276,7 @@ struct FilteredAuctionListView: View {
         }
         .navigationBarBackButtonHidden(true)
         .background(SwipeBackEnabler().frame(width: 0, height: 0))
-        .toolbarBackground(Color(.systemBackground), for: .navigationBar)
+        .toolbarBackground(.clear, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .alert("Data Information", isPresented: $showDataInfo) {
             Button("OK", role: .cancel) {}

@@ -2205,6 +2205,22 @@ struct HPDView: View {
         case footer
     }
 
+    private var favoritesChromeCardBackground: Color {
+        colorScheme == .dark ? Color.white.opacity(0.06) : Color.white.opacity(0.74)
+    }
+
+    private var favoritesChromeBorder: Color {
+        Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.08)
+    }
+
+    private var favoritesChromeMutedSurface: Color {
+        Color.primary.opacity(colorScheme == .dark ? 0.09 : 0.05)
+    }
+
+    private var favoritesChromeAccent: Color {
+        Color(hex: "#C5A455")
+    }
+
     private func favoriteGroupBackground(_ segment: FavoriteGroupSegment) -> some View {
         let radii: RectangleCornerRadii
         let strokeOpacity: Double
@@ -2263,12 +2279,6 @@ struct HPDView: View {
         sectionKey: String
     ) -> some View {
         let isExpanded = expandedLocations[sectionKey] ?? true
-        let locationHeaderBackground: Color = colorScheme == .light
-            ? Color.white.opacity(0.72)
-            : Color(.secondarySystemBackground)
-        let locationIconBackground: Color = colorScheme == .light
-            ? Color.white.opacity(0.90)
-            : Color(.secondarySystemBackground)
 
         HStack(spacing: 12) {
             Button {
@@ -2277,17 +2287,17 @@ struct HPDView: View {
             } label: {
                 ZStack {
                     Circle()
-                        .fill(locationIconBackground)
-                        .frame(width: 34, height: 34)
+                        .fill(favoritesChromeAccent.opacity(colorScheme == .dark ? 0.16 : 0.10))
+                        .frame(width: 40, height: 40)
                     Image("applemaps")
                         .resizable()
                         .scaledToFit()
-                        .frame(width: 18, height: 18)
+                        .frame(width: 19, height: 19)
                         .opacity(0.92)
                 }
                 .overlay {
                     Circle()
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+                        .stroke(favoritesChromeBorder, lineWidth: 0.5)
                 }
             }
             .buttonStyle(.plain)
@@ -2295,10 +2305,10 @@ struct HPDView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     Text(title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(Color.primary.opacity(0.88))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.78)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.82)
                         .allowsTightening(true)
                         .layoutPriority(1)
                 }
@@ -2317,28 +2327,37 @@ struct HPDView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
 
-            Text("\(totalVehicles)")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color(hex: "#C5A455").opacity(0.70))
-                .monospacedDigit()
+            VStack(alignment: .trailing, spacing: 8) {
+                Text("\(totalVehicles)")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(colorScheme == .dark ? Color.black.opacity(0.82) : favoritesChromeAccent.opacity(0.92))
+                    .monospacedDigit()
+                    .frame(minWidth: 34)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(colorScheme == .dark ? favoritesChromeAccent.opacity(0.92) : favoritesChromeAccent.opacity(0.14))
+                    )
 
-            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                .font(.system(size: 10, weight: .regular))
-                .foregroundStyle(Color.primary.opacity(0.35))
-                .fixedSize()
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(Color.primary.opacity(colorScheme == .dark ? 0.48 : 0.35))
+                    .fixedSize()
+            }
         }
         .contentShape(Rectangle())
         .onTapGesture {
             expandedLocations[sectionKey] = !isExpanded
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(locationHeaderBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(favoritesChromeCardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(favoritesChromeBorder, lineWidth: 0.5)
         }
         .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 0, trailing: 16))
         .listRowSeparator(.hidden)
@@ -2565,7 +2584,7 @@ struct HPDView: View {
                                 HStack(alignment: .top, spacing: 12) {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(favoritesDisplayDateTitle(for: dateGroup.date))
-                                            .font(.system(size: 15, weight: .medium))
+                                            .font(.system(size: 16, weight: .semibold))
                                             .foregroundStyle(Color.primary.opacity(0.84))
                                             .lineLimit(1)
                                             .minimumScaleFactor(0.92)
@@ -2608,8 +2627,6 @@ struct HPDView: View {
 
     private var favoriteLocationFilterCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Divider()
-                .overlay(Color.primary.opacity(0.10))
             Button {
                 isFavoriteLocationFilterExpanded.toggle()
                 if isFavoriteLocationFilterExpanded {
@@ -2618,41 +2635,54 @@ struct HPDView: View {
                     favoriteLocationAutoCollapseToken = UUID()
                 }
             } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "line.3.horizontal.decrease")
-                        .font(.system(size: 12, weight: .regular))
-                        .foregroundColor(Color.primary.opacity(0.40))
-                    Text("LOCATION")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(Color.primary.opacity(0.30))
-                        .kerning(1)
-                    Text("—")
-                        .foregroundColor(Color.primary.opacity(0.18))
-                    Text(favoriteLocationSelectionSummary)
-                        .font(.system(size: 13))
-                        .foregroundColor(Color.primary.opacity(0.74))
-                    Spacer()
-                    if !selectedFavoriteLocationFilters.isEmpty {
-                        Text("\(selectedFavoriteLocationFilters.count)")
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.primary.opacity(0.10))
-                            .foregroundStyle(Color.primary.opacity(0.48))
-                            .clipShape(Capsule())
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("LOCATION FILTER")
+                                .font(.system(size: 10, weight: .semibold))
+                                .tracking(1.6)
+                                .foregroundStyle(Color.primary.opacity(0.34))
+
+                            Text(favoriteLocationSelectionSummary)
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(Color.primary.opacity(0.88))
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        Spacer()
+
+                        HStack(spacing: 8) {
+                            if !selectedFavoriteLocationFilters.isEmpty {
+                                Text("\(selectedFavoriteLocationFilters.count)")
+                                    .font(.caption2.weight(.semibold))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(favoritesChromeMutedSurface)
+                                    .foregroundStyle(Color.primary.opacity(0.62))
+                                    .clipShape(Capsule())
+                            }
+                            Image(systemName: isFavoriteLocationFilterExpanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 10, weight: .regular))
+                                .foregroundColor(Color.primary.opacity(0.32))
+                        }
                     }
-                    Image(systemName: isFavoriteLocationFilterExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 10, weight: .regular))
-                        .foregroundColor(Color.primary.opacity(0.32))
+
+                    HStack(spacing: 10) {
+                        Image(systemName: "line.3.horizontal.decrease")
+                            .font(.system(size: 12, weight: .regular))
+                            .foregroundColor(Color.primary.opacity(0.40))
+                        Text("Filter by saved location")
+                            .font(.system(size: 13))
+                            .foregroundColor(Color.primary.opacity(0.56))
+                        Spacer()
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
-                .padding(.horizontal, 22)
-                .padding(.vertical, 12)
+                .padding(18)
             }
             .buttonStyle(.plain)
-            Divider()
-                .overlay(Color.primary.opacity(0.10))
 
             if isFavoriteLocationFilterExpanded {
                 SearchBar(
@@ -2686,10 +2716,19 @@ struct HPDView: View {
                     .foregroundStyle(Color.primary.opacity(0.74))
                     .padding(.top, 14)
                     .padding(.horizontal, 22)
+                    .padding(.bottom, 18)
                 }
             }
         }
-        .background(Color.clear)
+        .background(favoritesChromeCardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(favoritesChromeBorder, lineWidth: 0.5)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 6)
+        .padding(.bottom, 4)
     }
 
     private func scheduleFavoriteLocationAutoCollapse() {

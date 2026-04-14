@@ -254,16 +254,13 @@ struct VehicleCardView: View {
         return Color(.systemBackground)
     }
     private var cardElevatedColor: Color {
-        if isFavoritesContext && colorScheme == .light {
-            return Color.white.opacity(0.88)
+        if layout == .brandList {
+            return Color.primary.opacity(colorScheme == .dark ? 0.09 : 0.05)
         }
         return Color(.tertiarySystemBackground)
     }
     private var brandListCardBackgroundColor: Color {
-        if isFavoritesContext && colorScheme == .light {
-            return Color.white.opacity(0.74)
-        }
-        return Color(.secondarySystemBackground)
+        colorScheme == .dark ? Color.white.opacity(0.06) : Color.white.opacity(0.74)
     }
     private var cardBorderColor: Color { Color.primary.opacity(0.10) }
     private var cardPrimaryTextColor: Color { Color.primary.opacity(0.82) }
@@ -505,18 +502,44 @@ struct VehicleCardView: View {
     @ViewBuilder
     private func brandListSecondaryButtonLabel(icon: String, tint: Color = Color.primary.opacity(0.50)) -> some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color(.tertiarySystemBackground))
+            RoundedRectangle(cornerRadius: isFavoritesContext ? 16 : 8, style: .continuous)
+                .fill(isFavoritesContext ? cardElevatedColor : Color(.tertiarySystemBackground))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: isFavoritesContext ? 16 : 8, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(isFavoritesContext ? 0.08 : 0.07), lineWidth: 0.5)
                 )
 
             Image(systemName: icon)
-                .font(.system(size: 12, weight: .regular))
+                .font(.system(size: isFavoritesContext ? 13 : 12, weight: .regular))
                 .foregroundColor(tint)
         }
-        .frame(maxWidth: .infinity, minHeight: 32)
+        .frame(maxWidth: .infinity, minHeight: isFavoritesContext ? 42 : 32)
+    }
+
+    @ViewBuilder
+    private func favoriteActionButtonLabel(title: String, icon: String, filled: Bool, tint: Color? = nil) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+            Text(title)
+        }
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundStyle(
+            filled
+                ? AnyShapeStyle(Color.black.opacity(0.82))
+                : AnyShapeStyle((tint ?? Color.primary).opacity(colorScheme == .dark ? 0.88 : 0.78))
+        )
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(
+            filled
+                ? AnyShapeStyle(Color(hex: "#C5A455"))
+                : AnyShapeStyle(cardElevatedColor)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.primary.opacity(filled ? 0 : 0.08), lineWidth: 0.5)
+        }
     }
 
     private var brandListBody: some View {
@@ -644,55 +667,77 @@ struct VehicleCardView: View {
             Divider()
                 .opacity(0.05)
 
-            HStack(spacing: 6) {
-                if !hasCompleteBidData {
-                    Button(action: handleBidTap) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "arrow.up.right")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundColor(Color(hex: "#C5A455"))
-                            Text("Bid")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(Color(hex: "#C5A455"))
+            Group {
+                if isFavoritesContext {
+                    HStack(spacing: 8) {
+                        if !hasCompleteBidData {
+                            Button(action: handleBidTap) {
+                                favoriteActionButtonLabel(title: "Bid", icon: "arrow.up.right", filled: true)
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 32)
-                        .background(Color(hex: "#C5A455").opacity(0.10))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(Color(hex: "#C5A455").opacity(0.22), lineWidth: 0.5)
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .frame(maxWidth: .infinity)
-                }
 
-                ShareLink(item: shareText) {
-                    brandListSecondaryButtonLabel(icon: "square.and.arrow.up")
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity)
+                        ShareLink(item: shareText) {
+                            favoriteActionButtonLabel(title: "Share", icon: "square.and.arrow.up", filled: false)
+                        }
+                        .buttonStyle(.plain)
 
-                if !isAddedToCalendar {
-                    Button(action: handleCalendarTap) {
-                        brandListSecondaryButtonLabel(icon: "calendar.badge.plus")
-                    }
-                    .buttonStyle(.plain)
-                    .frame(maxWidth: .infinity)
-                }
+                        if !isAddedToCalendar {
+                            Button(action: handleCalendarTap) {
+                                favoriteActionButtonLabel(title: "Calendar", icon: "calendar.badge.plus", filled: false)
+                            }
+                            .buttonStyle(.plain)
+                        }
 
-                if hasStatVinAccess {
-                    Button(action: handleWebTap) {
-                        brandListSecondaryButtonLabel(
-                            icon: statVinIcon,
-                            tint: statVinLookupStatus == .unknown
-                                ? Color.primary.opacity(0.40)
-                                : statVinButtonTint.opacity(0.85)
-                        )
+                        if hasStatVinAccess {
+                            Button(action: handleWebTap) {
+                                favoriteActionButtonLabel(
+                                    title: statVinLookupStatus == .hasHistory ? "Photos" : "Search",
+                                    icon: statVinIcon,
+                                    filled: false,
+                                    tint: statVinLookupStatus == .unknown
+                                        ? Color.primary
+                                        : statVinButtonTint
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .frame(maxWidth: .infinity)
+                } else {
+                    HStack(spacing: 8) {
+                        if !hasCompleteBidData {
+                            Button(action: handleBidTap) {
+                                favoriteActionButtonLabel(title: "Bid", icon: "arrow.up.right", filled: true)
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        ShareLink(item: shareText) {
+                            favoriteActionButtonLabel(title: "Share", icon: "square.and.arrow.up", filled: false)
+                        }
+                        .buttonStyle(.plain)
+
+                        if !isAddedToCalendar {
+                            Button(action: handleCalendarTap) {
+                                favoriteActionButtonLabel(title: "Calendar", icon: "calendar.badge.plus", filled: false)
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        if hasStatVinAccess {
+                            Button(action: handleWebTap) {
+                                favoriteActionButtonLabel(
+                                    title: statVinLookupStatus == .hasHistory ? "Photos" : "Search",
+                                    icon: statVinIcon,
+                                    filled: false,
+                                    tint: statVinLookupStatus == .unknown
+                                        ? Color.primary
+                                        : statVinButtonTint
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
                 }
             }
             .padding(.horizontal, 14)
@@ -1014,9 +1059,9 @@ struct VehicleCardView: View {
         .foregroundStyle(cardPrimaryTextColor)
         .padding(layout == .brandList ? 0 : 16)
         .background(layout == .brandList ? brandListCardBackgroundColor : cardSurfaceColor)
-        .clipShape(RoundedRectangle(cornerRadius: layout == .brandList ? 14 : 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: layout == .brandList && isFavoritesContext ? 24 : (layout == .brandList ? 14 : 16), style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: layout == .brandList ? 14 : 16, style: .continuous)
+            RoundedRectangle(cornerRadius: layout == .brandList && isFavoritesContext ? 24 : (layout == .brandList ? 14 : 16), style: .continuous)
                 .stroke(
                     layout == .brandList
                         ? Color.primary.opacity(0.08)

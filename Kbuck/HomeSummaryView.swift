@@ -811,8 +811,6 @@ struct HomeSummaryView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(14)
-                        .background(homeLocationCardBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
 
                         if isLocationExpanded {
                             Divider()
@@ -830,7 +828,7 @@ struct HomeSummaryView: View {
                                     )) {
                                         HStack(spacing: 8) {
                                             Circle()
-                                                .fill(Color(.secondarySystemBackground))
+                                                .fill(Color.primary.opacity(colorScheme == .dark ? 0.09 : 0.05))
                                                 .frame(width: 32, height: 32)
                                                 .overlay {
                                                     Group {
@@ -883,11 +881,11 @@ struct HomeSummaryView: View {
                             }
                         }
                     }
-                    .background(Color(.systemBackground))
+                    .background(colorScheme == .light ? Color.white.opacity(0.74) : Color.white.opacity(0.06))
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+                            .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.08), lineWidth: 0.5)
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 12)
