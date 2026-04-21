@@ -24,9 +24,7 @@ private extension Color {
     }
 }
 
-// MARK: - Data models
-
-private struct InlineSearchBar: View {
+private struct LocationsInlineSearchBar: View {
     @Binding var text: String
     let placeholder: String
     @Environment(\.colorScheme) private var colorScheme
@@ -60,110 +58,61 @@ private struct InlineSearchBar: View {
     }
 }
 
-private struct LocationEntry: Identifiable {
-    let id       = UUID()
-    let location: String
-    let vehicles: [HPDEntry]
-    let count:    Int
-    let headerTime: String?
-    let makes:    [(make: String, count: Int)]   // sorted by count desc
-}
-
-private struct DateCard: Identifiable {
-    let id        = UUID()
-    let date:     String
-    let dateObj:  Date
-    let locations: [LocationEntry]               // sorted by count desc
-}
-
-private struct BrandFilterOption: Identifiable {
+private struct LocationFilterOption: Identifiable {
     let id: String
-    let make: String
+    let location: String
     let count: Int
+    let headerTime: String?
 }
 
-// MARK: - View
+private struct DateLocationCard: Identifiable {
+    let id = UUID()
+    let date: String
+    let dateObj: Date
+    let locations: [LocationFilterOption]
+}
 
-struct HomeSummaryView: View {
-
-    @Binding var selectedTab: Int
-    @Binding var targetLocationFilter: String?
+struct LocationsSummaryView: View {
 
     @AppStorage("hpdCachedEntries") private var hpdCachedEntriesData: Data = Data()
     @AppStorage("hpdRefreshTrigger") private var hpdRefreshTrigger: Int = 0
     @AppStorage("vehicleCacheWarmupInProgress") private var vehicleCacheWarmupInProgress: Bool = false
-    @State private var cachedGroupedSummaries: [DateCard] = []
-    @State private var cachedActiveVehicleCount: Int = 0
-    @State private var cachedBrandOptions: [BrandFilterOption] = []
-    @State private var hasBaseAuctionData: Bool = false
-
-    // MARK: - Collapse state
-
-    @State private var expandedDates: Set<String> = []
-    @State private var expandedLocations: Set<String> = []
-    @State private var isBrandFilterExpanded: Bool = false
-    @State private var selectedBrandFilters: Set<String> = []
-    @State private var isBrandSearchVisible: Bool = false
-    @State private var brandSearchText: String = ""
-    @State private var brandFilterAutoCollapseToken = UUID()
-
     @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var supabaseService: SupabaseService
     @EnvironmentObject private var storeManager: StoreManager
-    @AppStorage("userRole") private var userRole: String = "user"
-    @State private var showQuotaSheet: Bool = false
-    @State private var showBrandLimitAlert: Bool = false
 
-    private var activeHomeSearchText: String {
-        brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    @State private var cachedGroupedSummaries: [DateLocationCard] = []
+    @State private var cachedLocationOptions: [LocationFilterOption] = []
+    @State private var cachedActiveVehicleCount: Int = 0
+    @State private var hasBaseAuctionData: Bool = false
+    @State private var expandedDates: Set<String> = []
+    @State private var selectedLocationFilters: Set<String> = []
+    @State private var isLocationFilterExpanded: Bool = false
+    @State private var locationSearchText: String = ""
+    @State private var locationFilterAutoCollapseToken = UUID()
+    @State private var showQuotaSheet = false
+
+    private var activeSearchText: String {
+        locationSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var currentTierKey: String {
-        supabaseService.serverTierKey
-    }
-
-    private var toolbarTierKey: String? {
-        guard let rawTier = supabaseService.currentTier else { return nil }
-        let normalized = rawTier.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !normalized.isEmpty, normalized != "loading" else { return nil }
-        return normalized
-    }
-
-    private var currentTierDisplayName: String {
-        supabaseService.serverTierDisplayName
-    }
-
-    private var hasBrandFilterAccess: Bool {
-        supabaseService.hasServerPlatinumAccess
-    }
-
-    private var currentTierLimit: Int {
-        supabaseService.currentServerDailyLimit
-    }
-
-    private var brandFilterSummaryLabel: String {
-        if selectedBrandFilters.count == 1, let selected = selectedBrandFilters.first {
-            return brandDisplayName(for: selected)
+    private var locationFilterSummaryLabel: String {
+        if selectedLocationFilters.count == 1, let only = selectedLocationFilters.first {
+            return only
         }
-        return "All brands"
+        return "All locations"
     }
 
-    private var homeLocationCardBackground: Color {
-        colorScheme == .light
-            ? Color.white.opacity(0.72)
-            : Color(hex: "#C5A455").opacity(0.05)
+    private var locationCardBackground: Color {
+        colorScheme == .light ? Color.white.opacity(0.72) : Color(hex: "#C5A455").opacity(0.05)
     }
 
-    private var homeBrandChipBackground: Color {
-        colorScheme == .light
-            ? Color.white.opacity(0.72)
-            : Color(.secondarySystemBackground)
+    private var locationChipBackground: Color {
+        colorScheme == .light ? Color.white.opacity(0.72) : Color(.secondarySystemBackground)
     }
 
-    private var homeBrandChipSelectedBackground: Color {
-        colorScheme == .light
-            ? Color.white.opacity(0.86)
-            : Color(.tertiarySystemBackground)
+    private var locationChipSelectedBackground: Color {
+        colorScheme == .light ? Color.white.opacity(0.86) : Color(.tertiarySystemBackground)
     }
 
     private func displayDateTitle(for rawDate: String) -> String {
@@ -179,28 +128,25 @@ struct HomeSummaryView: View {
         return displayFormatter.string(from: date)
     }
 
-    // MARK: - Address normalisation (mirrors HPDView.sanitizedAddressForMaps + streetNumberKey)
-
     private static func normalizeAddress(_ raw: String) -> String {
         var t = raw
-            .replacingOccurrences(of: "*",        with: " ")
+            .replacingOccurrences(of: "*", with: " ")
             .replacingOccurrences(of: "\u{00A0}", with: " ")
-            .replacingOccurrences(of: "\n",       with: " ")
-            .replacingOccurrences(of: "\\s+",    with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard t.count >= 5 else { return "" }
 
         let lower = t.lowercased()
-        let hasDigit  = t.range(of: "\\d", options: .regularExpression) != nil
-        let hasZip    = t.range(of: #"\b\d{5}(?:-\d{4})?\b"#, options: .regularExpression) != nil
-        let hasStreet = lower.range(of: #"\b(st|ave|rd|dr|blvd|ln|lane|way|pkwy|parkway|court|ct|cir|circle|trl|trail|hwy|highway|suite|ste)\b"#,
-                                    options: .regularExpression) != nil
-        let looksBiz  = lower.contains(" llc") || lower.contains(" inc") ||
-                        lower.contains(" towing") || lower.contains(" storage") ||
-                        lower.contains(" motors") || lower.contains(" auto ")
+        let hasDigit = t.range(of: "\\d", options: .regularExpression) != nil
+        let hasZip = t.range(of: #"\b\d{5}(?:-\d{4})?\b"#, options: .regularExpression) != nil
+        let hasStreet = lower.range(of: #"\b(st|ave|rd|dr|blvd|ln|lane|way|pkwy|parkway|court|ct|cir|circle|trl|trail|hwy|highway|suite|ste)\b"#, options: .regularExpression) != nil
+        let looksBiz = lower.contains(" llc") || lower.contains(" inc") ||
+            lower.contains(" towing") || lower.contains(" storage") ||
+            lower.contains(" motors") || lower.contains(" auto ")
         if looksBiz && !(hasStreet || hasZip || hasDigit) { return "" }
-        if !(hasStreet || hasZip || hasDigit)             { return "" }
+        if !(hasStreet || hasZip || hasDigit) { return "" }
 
         for marker in [" houston", " tx ", ", tx", " texas"] {
             if let r = lower.range(of: marker) {
@@ -214,107 +160,74 @@ struct HomeSummaryView: View {
         return t
     }
 
-    private static func streetKey(_ s: String) -> String {
-        s.components(separatedBy: CharacterSet.decimalDigits.inverted)
-         .first { !$0.isEmpty } ?? s.uppercased()
-    }
-
-    // MARK: - Grouped summaries (Date-primary)
-    //
-    // Single O(n) pass. Primary sort: chronological (soonest first).
-    // Secondary sort: locations by vehicle count desc.
-
-    private static func buildGroupedSummaries(from entries: [HPDEntry]) -> [DateCard] {
+    private static func buildGroupedSummaries(from entries: [HPDEntry]) -> [DateLocationCard] {
         let fmt: DateFormatter = {
             let f = DateFormatter()
             f.dateFormat = "MM/dd/yyyy"
-            f.locale     = Locale(identifier: "en_US_POSIX")
+            f.locale = Locale(identifier: "en_US_POSIX")
             return f
         }()
 
-        var dateMap:  [String: [String: [String: Int]]] = [:]
-        var labelMap: [String: String]                  = [:]
-        var vehicleMap: [String: [String: [HPDEntry]]]  = [:]
+        var dateMap: [String: [String: [HPDEntry]]] = [:]
 
         for entry in entries {
-            // Mirror HPDView: skip entries whose auction date has already passed
             guard !isDateInPast(entry.dateScheduled) else { continue }
-            let date  = entry.dateScheduled.trimmingCharacters(in: .whitespacesAndNewlines)
+            let date = entry.dateScheduled.trimmingCharacters(in: .whitespacesAndNewlines)
             let clean = normalizeAddress(entry.lotAddress)
             guard !date.isEmpty, !clean.isEmpty else { continue }
-
-            let skey    = streetKey(clean)
-            let makeRaw = entry.make.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-            let makeKey = makeRaw.isEmpty ? "UNKNOWN" : makeRaw
-
-            if let existing = labelMap[skey] {
-                if clean.count < existing.count { labelMap[skey] = clean }
-            } else {
-                labelMap[skey] = clean
-            }
-
-            dateMap[date, default: [:]][skey, default: [:]][makeKey, default: 0] += 1
-            vehicleMap[date, default: [:]][skey, default: []].append(entry)
+            dateMap[date, default: [:]][clean, default: []].append(entry)
         }
 
-        return dateMap
-            .compactMap { dateStr, locMap -> DateCard? in
-                guard let dateObj = fmt.date(from: dateStr) else { return nil }
+        return dateMap.compactMap { dateStr, locationMap -> DateLocationCard? in
+            guard let dateObj = fmt.date(from: dateStr) else { return nil }
 
-                let locations: [LocationEntry] = locMap
-                    .compactMap { skey, makeHistogram -> LocationEntry? in
-                        guard let label = labelMap[skey] else { return nil }
-                        let vehicles = vehicleMap[dateStr]?[skey] ?? []
-                        let total = makeHistogram.values.reduce(0, +)
-                        let makes = makeHistogram
-                            .sorted { $0.value > $1.value }
-                            .map { (make: $0.key, count: $0.value) }
-                        let headerTime = vehicles.first.flatMap { vehicle in
-                            parseAuctionDate(vehicle.dateScheduled, timeStr: vehicle.time)?.compactAuctionTime()
-                        }
-                        return LocationEntry(
-                            location: label,
-                            vehicles: vehicles,
-                            count: total,
-                            headerTime: headerTime,
-                            makes: makes
-                        )
-                    }
-                    .sorted { $0.count > $1.count }
-
-                return DateCard(date: dateStr, dateObj: dateObj, locations: locations)
+            let locations = locationMap.map { label, vehicles in
+                LocationFilterOption(
+                    id: label,
+                    location: label,
+                    count: vehicles.count,
+                    headerTime: vehicles.first.flatMap { parseAuctionDate($0.dateScheduled, timeStr: $0.time)?.compactAuctionTime() }
+                )
             }
-            .sorted { $0.dateObj < $1.dateObj }
-    }
-
-    private static func buildBrandOptions(from entries: [HPDEntry]) -> [BrandFilterOption] {
-        var makeCounts: [String: Int] = [:]
-
-        for entry in entries {
-            guard !isDateInPast(entry.dateScheduled) else { continue }
-
-            let cleanAddress = normalizeAddress(entry.lotAddress)
-            guard !cleanAddress.isEmpty else { continue }
-
-            let makeKey = entry.make
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .uppercased()
-            guard !makeKey.isEmpty else { continue }
-
-            makeCounts[makeKey, default: 0] += 1
-        }
-
-        return makeCounts
-            .map { BrandFilterOption(id: $0.key, make: $0.key, count: $0.value) }
             .sorted {
                 if $0.count == $1.count {
-                    return brandDisplayName(for: $0.make) < brandDisplayName(for: $1.make)
+                    return $0.location < $1.location
                 }
                 return $0.count > $1.count
             }
+
+            return DateLocationCard(date: dateStr, dateObj: dateObj, locations: locations)
+        }
+        .sorted { $0.dateObj < $1.dateObj }
     }
 
-    private func defaultExpandedDate(from grouped: [DateCard]) -> String? {
+    private static func buildLocationOptions(from entries: [HPDEntry]) -> [LocationFilterOption] {
+        var locationMap: [String: [HPDEntry]] = [:]
+
+        for entry in entries {
+            guard !isDateInPast(entry.dateScheduled) else { continue }
+            let clean = normalizeAddress(entry.lotAddress)
+            guard !clean.isEmpty else { continue }
+            locationMap[clean, default: []].append(entry)
+        }
+
+        return locationMap.map { label, vehicles in
+            LocationFilterOption(
+                id: label,
+                location: label,
+                count: vehicles.count,
+                headerTime: vehicles.first.flatMap { parseAuctionDate($0.dateScheduled, timeStr: $0.time)?.compactAuctionTime() }
+            )
+        }
+        .sorted {
+            if $0.count == $1.count {
+                return $0.location < $1.location
+            }
+            return $0.count > $1.count
+        }
+    }
+
+    private func defaultExpandedDate(from grouped: [DateLocationCard]) -> String? {
         guard !grouped.isEmpty else { return nil }
 
         let now = Date()
@@ -332,74 +245,43 @@ struct HomeSummaryView: View {
         return grouped.first?.date
     }
 
-    private func locationKey(for date: String, location: String) -> String {
-        "\(date)|\(location)"
-    }
-
-    private func defaultExpandedLocations(from grouped: [DateCard]) -> Set<String> {
-        Set(
-            grouped.flatMap { card in
-                card.locations.map { locationKey(for: card.date, location: $0.location) }
-            }
-        )
-    }
-
-    private func locationIsExpanded(date: String, location: String) -> Bool {
-        expandedLocations.contains(locationKey(for: date, location: location))
-    }
-
-    private func toggleLocationExpansion(date: String, location: String) {
-        let key = locationKey(for: date, location: location)
-        if expandedLocations.contains(key) {
-            expandedLocations.remove(key)
-        } else {
-            expandedLocations.insert(key)
-        }
-    }
-    
     private func recomputeSummaries() {
         guard !hpdCachedEntriesData.isEmpty,
               let decoded = try? JSONDecoder().decode([HPDEntry].self, from: hpdCachedEntriesData)
         else {
             cachedGroupedSummaries = []
+            cachedLocationOptions = []
             cachedActiveVehicleCount = 0
-            cachedBrandOptions = []
             hasBaseAuctionData = false
             expandedDates = []
-            expandedLocations = []
             return
         }
 
         hasBaseAuctionData = !decoded.isEmpty
 
-        let searchQuery = brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let searchFilteredEntries: [HPDEntry]
-        if searchQuery.isEmpty {
+        if activeSearchText.isEmpty {
             searchFilteredEntries = decoded
         } else {
             searchFilteredEntries = decoded.filter { entry in
-                vehicleMatchesSearch(searchQuery, entry: entry)
+                vehicleMatchesSearch(activeSearchText, entry: entry)
+                    || Self.normalizeAddress(entry.lotAddress).localizedCaseInsensitiveContains(activeSearchText)
             }
         }
 
-        let brandOptions = Self.buildBrandOptions(from: searchFilteredEntries)
-        cachedBrandOptions = brandOptions
+        let locationOptions = Self.buildLocationOptions(from: searchFilteredEntries)
+        cachedLocationOptions = locationOptions
 
-        let availableMakes = Set(brandOptions.map(\.make))
-        let validSelectedMakes = selectedBrandFilters.intersection(availableMakes)
-        if validSelectedMakes != selectedBrandFilters {
-            selectedBrandFilters = validSelectedMakes
-        }
-
-        if !hasBrandFilterAccess, !selectedBrandFilters.isEmpty {
-            selectedBrandFilters = []
+        let validLocations = Set(locationOptions.map(\.location))
+        let validSelectedLocations = selectedLocationFilters.intersection(validLocations)
+        if validSelectedLocations != selectedLocationFilters {
+            selectedLocationFilters = validSelectedLocations
         }
 
         let filteredEntries: [HPDEntry]
-        if hasBrandFilterAccess, !selectedBrandFilters.isEmpty {
-            filteredEntries = searchFilteredEntries.filter {
-                let makeKey = $0.make.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-                return selectedBrandFilters.contains(makeKey)
+        if !selectedLocationFilters.isEmpty {
+            filteredEntries = searchFilteredEntries.filter { entry in
+                selectedLocationFilters.contains(Self.normalizeAddress(entry.lotAddress))
             }
         } else {
             filteredEntries = searchFilteredEntries
@@ -408,15 +290,12 @@ struct HomeSummaryView: View {
         let grouped = Self.buildGroupedSummaries(from: filteredEntries)
         cachedGroupedSummaries = grouped
         cachedActiveVehicleCount = grouped.reduce(0) { $0 + $1.locations.reduce(0) { $0 + $1.count } }
-        expandedLocations = defaultExpandedLocations(from: grouped)
         if let defaultDate = defaultExpandedDate(from: grouped) {
             expandedDates = [defaultDate]
         } else {
             expandedDates = []
         }
     }
-
-    // MARK: - Body
 
     var body: some View {
         NavigationStack {
@@ -427,14 +306,13 @@ struct HomeSummaryView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 16) {
-                            InlineSearchBar(
-                                text: $brandSearchText,
-                                placeholder: "Year, make, model or VIN"
+                            LocationsInlineSearchBar(
+                                text: $locationSearchText,
+                                placeholder: "Year, make, model, VIN or location"
                             )
 
-                            if hasBrandFilterAccess {
-                                brandFilterCard
-                            }
+                            locationFilterCard
+
                             if cachedGroupedSummaries.isEmpty {
                                 noResultsState
                             } else {
@@ -465,7 +343,7 @@ struct HomeSummaryView: View {
                                 .foregroundColor(Color.primary.opacity(0.32))
                                 .kerning(2)
 
-                            Text("Brands")
+                            Text("Locations")
                                 .font(.system(size: 26, weight: .semibold))
                                 .foregroundColor(.primary)
                                 .kerning(-1)
@@ -511,11 +389,6 @@ struct HomeSummaryView: View {
                     .presentationDragIndicator(.visible)
             }
         }
-        .alert("Brand Limit Reached", isPresented: $showBrandLimitAlert) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("You can select up to 5 brands at a time.")
-        }
         .task {
             recomputeSummaries()
             if supabaseService.currentTier == nil {
@@ -525,71 +398,52 @@ struct HomeSummaryView: View {
         .onChange(of: hpdCachedEntriesData) { _, _ in
             recomputeSummaries()
         }
-        .onChange(of: selectedBrandFilters) { _, _ in
-            if isBrandFilterExpanded {
-                scheduleBrandFilterAutoCollapse()
+        .onChange(of: locationSearchText) { _, _ in
+            if !activeSearchText.isEmpty {
+                isLocationFilterExpanded = true
+            }
+            if isLocationFilterExpanded {
+                scheduleLocationFilterAutoCollapse()
             }
             recomputeSummaries()
         }
-        .onChange(of: brandSearchText) { _, _ in
-            if !brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                isBrandFilterExpanded = true
-            }
-            if isBrandFilterExpanded {
-                scheduleBrandFilterAutoCollapse()
-            }
-            if brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                isBrandSearchVisible = false
-            }
-            recomputeSummaries()
-        }
-        .onChange(of: currentTierKey) { _, _ in
-            if !hasBrandFilterAccess {
-                selectedBrandFilters = []
-            }
-            recomputeSummaries()
-        }
-        .onChange(of: userRole) { _, _ in
-            if !hasBrandFilterAccess {
-                selectedBrandFilters = []
+        .onChange(of: selectedLocationFilters) { _, _ in
+            if isLocationFilterExpanded {
+                scheduleLocationFilterAutoCollapse()
             }
             recomputeSummaries()
         }
     }
 
-    // MARK: - Platinum brand filter
-
-    private var brandFilterCard: some View {
+    private var locationFilterCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             Divider()
                 .overlay(Color.primary.opacity(0.10))
             Button {
-                isBrandFilterExpanded.toggle()
-                if isBrandFilterExpanded {
-                    scheduleBrandFilterAutoCollapse()
+                isLocationFilterExpanded.toggle()
+                if isLocationFilterExpanded {
+                    scheduleLocationFilterAutoCollapse()
                 } else {
-                    brandFilterAutoCollapseToken = UUID()
-                    if brandSearchText.isEmpty {
-                        isBrandSearchVisible = false
-                    }
+                    locationFilterAutoCollapseToken = UUID()
                 }
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "line.3.horizontal.decrease")
                         .font(.system(size: 12, weight: .regular))
                         .foregroundColor(Color.primary.opacity(0.40))
-                    Text("BRAND")
+                    Text("LOCATION")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(Color.primary.opacity(0.30))
                         .kerning(1)
                     Text("—")
                         .foregroundColor(Color.primary.opacity(0.18))
-                    Text(brandFilterSummaryLabel)
+                    Text(locationFilterSummaryLabel)
                         .font(.system(size: 13))
                         .foregroundColor(Color.primary.opacity(0.74))
+                        .lineLimit(1)
                     Spacer()
-                    if !selectedBrandFilters.isEmpty {
-                        Text("\(selectedBrandFilters.count)/5")
+                    if !selectedLocationFilters.isEmpty {
+                        Text("\(selectedLocationFilters.count)")
                             .font(.caption2.weight(.semibold))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
@@ -597,7 +451,7 @@ struct HomeSummaryView: View {
                             .foregroundStyle(Color.primary.opacity(0.48))
                             .clipShape(Capsule())
                     }
-                    Image(systemName: isBrandFilterExpanded ? "chevron.up" : "chevron.down")
+                    Image(systemName: isLocationFilterExpanded ? "chevron.up" : "chevron.down")
                         .font(.system(size: 10, weight: .regular))
                         .foregroundColor(Color.primary.opacity(0.32))
                 }
@@ -610,26 +464,18 @@ struct HomeSummaryView: View {
             Divider()
                 .overlay(Color.primary.opacity(0.10))
 
-            if isBrandFilterExpanded {
-                if cachedBrandOptions.isEmpty, !brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("No matching brands for that search.")
-                        .font(.caption)
-                        .foregroundStyle(Color.primary.opacity(0.52))
-                        .padding(.top, 14)
-                        .padding(.horizontal, 22)
-                }
-
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 78), spacing: 10)], spacing: 10) {
-                    ForEach(cachedBrandOptions) { option in
-                        brandFilterChip(for: option)
+            if isLocationFilterExpanded {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
+                    ForEach(cachedLocationOptions) { option in
+                        locationFilterChip(for: option)
                     }
                 }
                 .padding(.top, 14)
                 .padding(.horizontal, 22)
 
-                if !selectedBrandFilters.isEmpty {
-                    Button("Clear All Brands") {
-                        selectedBrandFilters.removeAll()
+                if !selectedLocationFilters.isEmpty {
+                    Button("Clear All Locations") {
+                        selectedLocationFilters.removeAll()
                     }
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.primary.opacity(0.74))
@@ -641,54 +487,44 @@ struct HomeSummaryView: View {
         .background(Color.clear)
     }
 
-    private func scheduleBrandFilterAutoCollapse() {
-        let token = UUID()
-        brandFilterAutoCollapseToken = token
-
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 7_000_000_000)
-            guard brandFilterAutoCollapseToken == token, isBrandFilterExpanded else { return }
-            guard brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-            isBrandFilterExpanded = false
-        }
-    }
-
-    private func brandFilterChip(for option: BrandFilterOption) -> some View {
-        let isSelected = selectedBrandFilters.contains(option.make)
+    private func locationFilterChip(for option: LocationFilterOption) -> some View {
+        let isSelected = selectedLocationFilters.contains(option.location)
 
         return Button {
-            toggleBrandFilter(option.make)
-        } label: {
-            VStack(spacing: 6) {
-                Group {
-                    if let asset = brandAssetName(for: option.make),
-                       let image = UIImage(named: asset) {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 28, height: 28)
-                    } else {
-                        Image(systemName: "car.fill")
-                            .font(.title3)
-                            .frame(width: 28, height: 28)
-                    }
-                }
-                .foregroundStyle(Color.primary.opacity(isSelected ? 0.84 : 0.46))
-
-                Text(brandDisplayName(for: option.make))
-                    .font(.caption2.weight(.semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-
-                Text("\(option.count)")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(Color.primary.opacity(isSelected ? 0.62 : 0.36))
+            if isSelected {
+                selectedLocationFilters.remove(option.location)
+            } else {
+                selectedLocationFilters = [option.location]
             }
-            .foregroundStyle(Color.primary.opacity(isSelected ? 0.80 : 0.72))
-            .frame(maxWidth: .infinity, minHeight: 84)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 8)
-            .background(isSelected ? homeBrandChipSelectedBackground : homeBrandChipBackground)
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: "mappin.and.ellipse")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(Color.primary.opacity(isSelected ? 0.82 : 0.46))
+
+                    Spacer()
+
+                    Text("\(option.count)")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(Color.primary.opacity(isSelected ? 0.62 : 0.36))
+                }
+
+                Text(option.location)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(2)
+                    .foregroundStyle(Color.primary.opacity(isSelected ? 0.82 : 0.72))
+
+                if let headerTime = option.headerTime, !headerTime.isEmpty {
+                    Text(headerTime)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(Color.primary.opacity(isSelected ? 0.56 : 0.38))
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(isSelected ? locationChipSelectedBackground : locationChipBackground)
             .overlay {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(isSelected ? Color.primary.opacity(0.14) : Color.primary.opacity(0.10), lineWidth: 0.5)
@@ -698,37 +534,23 @@ struct HomeSummaryView: View {
         .buttonStyle(.plain)
     }
 
-    private func toggleBrandFilter(_ make: String) {
-        if selectedBrandFilters.contains(make) {
-            selectedBrandFilters.remove(make)
-            return
-        }
+    private func scheduleLocationFilterAutoCollapse() {
+        let token = UUID()
+        locationFilterAutoCollapseToken = token
 
-        guard selectedBrandFilters.count < 5 else {
-            showBrandLimitAlert = true
-            return
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 7_000_000_000)
+            guard locationFilterAutoCollapseToken == token, isLocationFilterExpanded else { return }
+            guard activeSearchText.isEmpty else { return }
+            isLocationFilterExpanded = false
         }
-
-        selectedBrandFilters.insert(make)
     }
 
-    // MARK: - Apple Wallet-style collapsible date card
-
     @ViewBuilder
-    private func dateCard(_ card: DateCard) -> some View {
+    private func dateCard(_ card: DateLocationCard) -> some View {
         let isExpanded = expandedDates.contains(card.date)
         let totalForDate = card.locations.reduce(0) { $0 + $1.count }
         let displayDate = displayDateTitle(for: card.date)
-        let aggregatedMakes = Dictionary(grouping: card.locations.flatMap(\.vehicles)) {
-            $0.make.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        }
-            .map { (make: $0.key, count: $0.value.count) }
-            .sorted {
-                if $0.count == $1.count {
-                    return brandDisplayName(for: $0.make) < brandDisplayName(for: $1.make)
-                }
-                return $0.count > $1.count
-            }
 
         VStack(alignment: .leading, spacing: 0) {
             Button {
@@ -768,46 +590,45 @@ struct HomeSummaryView: View {
 
             if isExpanded {
                 VStack(spacing: 0) {
-                    ForEach(Array(aggregatedMakes.enumerated()), id: \.element.make) { index, makeEntry in
+                    ForEach(Array(card.locations.enumerated()), id: \.element.id) { index, locationEntry in
                         NavigationLink(destination: FilteredAuctionListView(
                             date: card.date,
-                            location: nil,
-                            brand: makeEntry.make,
+                            location: locationEntry.location,
+                            brand: nil,
                             allowedBrands: nil,
-                            initialSearchText: activeHomeSearchText
+                            initialSearchText: activeSearchText
                         )) {
-                            HStack(spacing: 8) {
+                            HStack(spacing: 10) {
                                 Circle()
                                     .fill(Color.primary.opacity(colorScheme == .dark ? 0.09 : 0.05))
                                     .frame(width: 32, height: 32)
                                     .overlay {
-                                        Group {
-                                            if let asset = brandAssetName(for: makeEntry.make),
-                                               let img = UIImage(named: asset) {
-                                                Image(uiImage: img)
-                                                    .resizable()
-                                                    .aspectRatio(contentMode: .fit)
-                                                    .frame(width: 22, height: 22)
-                                                    .saturation(0.35)
-                                                    .brightness(-0.05)
-                                                    .blendMode(colorScheme == .dark ? .screen : .normal)
-                                            } else {
-                                                Image(systemName: "car.fill")
-                                                    .frame(width: 22, height: 22)
-                                                    .foregroundStyle(Color.primary.opacity(0.42))
-                                            }
-                                        }
+                                        Image(systemName: "mappin.and.ellipse")
+                                            .font(.system(size: 14, weight: .medium))
+                                            .foregroundStyle(Color.primary.opacity(0.42))
                                     }
                                     .overlay {
                                         Circle()
                                             .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
                                     }
-                                Text(brandDisplayName(for: makeEntry.make))
-                                    .font(.system(size: 14.5, weight: .regular))
-                                    .foregroundColor(Color.primary.opacity(0.82))
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(locationEntry.location)
+                                        .font(.system(size: 14.5, weight: .regular))
+                                        .foregroundColor(Color.primary.opacity(0.82))
+                                        .lineLimit(1)
+
+                                    if let headerTime = locationEntry.headerTime, !headerTime.isEmpty {
+                                        Text(headerTime)
+                                            .font(.system(size: 12))
+                                            .foregroundColor(Color.primary.opacity(0.40))
+                                    }
+                                }
+
                                 Spacer()
+
                                 HStack(spacing: 4) {
-                                    Text("\(makeEntry.count)")
+                                    Text("\(locationEntry.count)")
                                         .font(.system(size: 13, weight: .regular))
                                         .foregroundColor(Color.primary.opacity(0.40))
                                         .monospacedDigit()
@@ -822,14 +643,15 @@ struct HomeSummaryView: View {
                             .padding(.horizontal, 14)
                         }
                         .buttonStyle(.plain)
-                        if index < aggregatedMakes.count - 1 {
+
+                        if index < card.locations.count - 1 {
                             Divider()
                                 .padding(.leading, 52)
                                 .overlay(Color.primary.opacity(0.08))
                         }
                     }
                 }
-                .background(colorScheme == .light ? Color.white.opacity(0.74) : Color.white.opacity(0.06))
+                .background(locationCardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -842,17 +664,15 @@ struct HomeSummaryView: View {
         .padding(.bottom, 8)
     }
 
-    // MARK: - Empty state
-
     private var emptyState: some View {
         VStack(spacing: 16) {
-            Image(systemName: "car.2.fill")
+            Image(systemName: "map.fill")
                 .font(.system(size: 48))
                 .foregroundStyle(Color.primary.opacity(0.28))
             Text("No Data Available")
                 .font(.headline)
                 .foregroundStyle(Color.primary.opacity(0.80))
-            Text("Fetch auction data from the HPD tab to populate the dashboard.")
+            Text("Fetch auction data to populate the locations view.")
                 .font(.subheadline)
                 .foregroundStyle(Color.primary.opacity(0.52))
                 .multilineTextAlignment(.center)
@@ -868,14 +688,14 @@ struct HomeSummaryView: View {
             Text("No Results")
                 .font(.headline)
                 .foregroundStyle(Color.primary.opacity(0.80))
-            Text("No vehicles match \"\(activeHomeSearchText)\".")
+            Text("No locations match \"\(activeSearchText)\".")
                 .font(.subheadline)
                 .foregroundStyle(Color.primary.opacity(0.52))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
             Button("Clear Search") {
-                brandSearchText = ""
-                isBrandFilterExpanded = true
+                locationSearchText = ""
+                isLocationFilterExpanded = true
             }
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(Color.primary.opacity(0.74))

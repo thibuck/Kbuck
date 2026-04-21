@@ -129,11 +129,12 @@ struct ContentView: View {
     // Shared service injected at app root so sheets and all branches receive it safely.
     @EnvironmentObject private var supabaseService: SupabaseService
 
-    // Cross-tab routing state — elevated here so HomeSummaryView and HPDView share a single source of truth.
+    // Cross-tab routing state — elevated here so dashboard tabs share a single source of truth.
     @State private var selectedTab: Int = 0
     @State private var crossTabLocationFilter: String? = nil
 
-    private let homeTab = 0
+    private let brandsTab = 0
+    private let locationsTab = 1
     private let favoritesTab = 2
     private let adminCarfaxTab = 3
     private let reportsTab = 4
@@ -150,15 +151,19 @@ struct ContentView: View {
                         HomeSummaryView(selectedTab: $selectedTab, targetLocationFilter: $crossTabLocationFilter)
                             .tabItem {
                                 VStack(spacing: 2) {
-                                    Image(systemName: selectedTab == homeTab ? "house.fill" : "house")
-                                    Text("Home")
+                                    Image(systemName: selectedTab == brandsTab ? "square.grid.2x2.fill" : "square.grid.2x2")
+                                    Text("Brands")
                                 }
                             }
-                            .tag(homeTab)
-                        // Temporarily hidden from the app UI, but kept in code for later reuse.
-                        // HPDView(externalLocationFilter: $crossTabLocationFilter)
-                        //     .tabItem { Label("HPD AUCTION", systemImage: "car.fill") }
-                        //     .tag(1)
+                            .tag(brandsTab)
+                        LocationsSummaryView()
+                            .tabItem {
+                                VStack(spacing: 2) {
+                                    Image(systemName: selectedTab == locationsTab ? "mappin.and.ellipse.circle.fill" : "mappin.and.ellipse.circle")
+                                    Text("Locations")
+                                }
+                            }
+                            .tag(locationsTab)
                         HPDView(favoritesOnly: true, externalLocationFilter: .constant(nil))
                             .tabItem {
                                 VStack(spacing: 2) {

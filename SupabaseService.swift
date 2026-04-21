@@ -411,7 +411,7 @@ private struct StatVinCacheUpsertRow: Encodable {
                 .value
 
             var newFavs: Set<String> = []
-            var newOdoByVIN: [String: OdoInfo] = [:]
+            var mergedOdoByVIN = odoByVIN
             for row in rows {
                 let vin = normalizeVIN(row.vin)
                 guard !vin.isEmpty else { continue }
@@ -423,14 +423,14 @@ private struct StatVinCacheUpsertRow: Encodable {
 
                 guard !odometer.isEmpty || !testDate.isEmpty || !privateValue.isEmpty else { continue }
 
-                newOdoByVIN[vin] = OdoInfo(
+                mergedOdoByVIN[vin] = OdoInfo(
                     odometer: odometer,
                     testDate: testDate,
                     privateValue: privateValue.isEmpty ? nil : formatPrivateValueForDisplay(privateValue)
                 )
             }
             favorites = newFavs
-            odoByVIN = newOdoByVIN
+            odoByVIN = mergedOdoByVIN
             persistFavorites()
             persistOdo()
 

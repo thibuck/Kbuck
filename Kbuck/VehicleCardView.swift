@@ -229,9 +229,19 @@ struct VehicleCardView: View {
         case .unknown:
             return nil
         case .noHistory:
-            return "No pics"
+            return "No history"
         case .hasHistory:
-            return "Pics found"
+            return "Photos"
+        }
+    }
+    private var statVinActionTitle: String {
+        switch statVinLookupStatus {
+        case .unknown:
+            return "Search"
+        case .noHistory:
+            return "No history"
+        case .hasHistory:
+            return "Photos"
         }
     }
     private var statVinIcon: String {
@@ -345,6 +355,24 @@ struct VehicleCardView: View {
         default:
             return nil
         }
+    }
+
+    private var brandListInspectionRelative: String? {
+        guard let inspectionDate = odoInfo?.testDate.dateOnly, !inspectionDate.isEmpty else { return nil }
+        let relative = inspectionDate
+            .timeAgoShort()
+            .replacingOccurrences(of: "(", with: "")
+            .replacingOccurrences(of: ")", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return relative.isEmpty ? nil : relative
+    }
+
+    private var brandListLocationLine: String? {
+        guard showAddress else { return nil }
+        let address = sanitizedAddr(entry.lotAddress).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !address.isEmpty else { return nil }
+        let time = parseAuctionDateWithTime(entry.dateScheduled, timeStr: entry.time)?.compactAuctionTime() ?? ""
+        return time.isEmpty ? address : "\(address) · \(time)"
     }
 
     private func titleCasedVehicleText(_ text: String) -> String {
@@ -518,11 +546,16 @@ struct VehicleCardView: View {
 
     @ViewBuilder
     private func favoriteActionButtonLabel(title: String, icon: String, filled: Bool, tint: Color? = nil) -> some View {
+        let titleFontSize: CGFloat = title.count >= 10 ? 10.5 : 12
+
         HStack(spacing: 8) {
             Image(systemName: icon)
             Text(title)
+                .lineLimit(1)
+                .minimumScaleFactor(0.55)
+                .layoutPriority(1)
         }
-        .font(.system(size: 12, weight: .semibold))
+        .font(.system(size: titleFontSize, weight: .semibold))
         .foregroundStyle(
             filled
                 ? AnyShapeStyle(Color.black.opacity(0.82))
@@ -547,9 +580,9 @@ struct VehicleCardView: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(yearStr)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
                         .foregroundColor(Color.primary.opacity(0.35))
-                        .kerning(1)
+                        .kerning(1.2)
 
                     Text("\(displayMake) \(brandListModelTrim)")
                         .font(.system(size: 16, weight: .semibold))
@@ -566,6 +599,13 @@ struct VehicleCardView: View {
 
                         if let brandListMpgSummary {
                             Text(brandListMpgSummary)
+                                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                                .foregroundColor(Color.primary.opacity(0.30))
+                                .lineLimit(1)
+                        }
+
+                        if let brandListInspectionRelative {
+                            Text("· last insp. \(brandListInspectionRelative)")
                                 .font(.system(size: 9.5, weight: .medium, design: .monospaced))
                                 .foregroundColor(Color.primary.opacity(0.30))
                                 .lineLimit(1)
@@ -664,6 +704,18 @@ struct VehicleCardView: View {
             }
             .padding(.vertical, 10)
 
+            if let brandListLocationLine {
+                Text(brandListLocationLine)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Color.primary.opacity(0.35))
+                    .kerning(0.2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 10)
+            }
+
             Divider()
                 .opacity(0.05)
 
@@ -692,7 +744,7 @@ struct VehicleCardView: View {
                         if hasStatVinAccess {
                             Button(action: handleWebTap) {
                                 favoriteActionButtonLabel(
-                                    title: statVinLookupStatus == .hasHistory ? "Photos" : "Search",
+                                    title: statVinActionTitle,
                                     icon: statVinIcon,
                                     filled: false,
                                     tint: statVinLookupStatus == .unknown
@@ -727,7 +779,7 @@ struct VehicleCardView: View {
                         if hasStatVinAccess {
                             Button(action: handleWebTap) {
                                 favoriteActionButtonLabel(
-                                    title: statVinLookupStatus == .hasHistory ? "Photos" : "Search",
+                                    title: statVinActionTitle,
                                     icon: statVinIcon,
                                     filled: false,
                                     tint: statVinLookupStatus == .unknown
@@ -1257,6 +1309,7 @@ struct VehicleCardView: View {
             ExtractionFlowView(
                 entry: entry,
                 lastProcessedVIN: $lastProcessedVIN,
+                isAddedToCalendar: $isAddedToCalendar,
                 shouldCheckSupabaseCacheOnAppear: shouldCheckBidCacheInFlow
             )
                 .environmentObject(supabaseService)
@@ -1525,6 +1578,7 @@ struct ExtractionFlowView: View {
 
     let entry: HPDEntry
     @Binding var lastProcessedVIN: String?
+    @Binding var isAddedToCalendar: Bool
     let shouldCheckSupabaseCacheOnAppear: Bool
 
     @Environment(\.dismiss) private var dismiss
@@ -1544,9 +1598,12 @@ struct ExtractionFlowView: View {
     @State private var shimmerX:          CGFloat = -60
     @State private var contentOpacity:    Double  = 0
     @State private var addedToFavorites:  Bool    = false
+    @State private var shouldCommitFavoriteOnDismiss = false
+    @State private var favoritesConfirmationMessage: String = "This vehicle was removed from this report and saved to Favorites, where you can find it anytime."
     @State private var heartScale:        CGFloat = 1.0
     @State private var dataLoadedFromSupabase = false
     @State private var canStartWebExtraction = false
+    @State private var pendingCalendarEntry: HPDEntry? = nil
 
     private let gold = Color(hex: "#C5A455")
     private var cardKey: String { normalizeVIN(entry.vin) }
@@ -1562,10 +1619,12 @@ struct ExtractionFlowView: View {
     init(
         entry: HPDEntry,
         lastProcessedVIN: Binding<String?>,
+        isAddedToCalendar: Binding<Bool>,
         shouldCheckSupabaseCacheOnAppear: Bool = true
     ) {
         self.entry            = entry
         self._lastProcessedVIN = lastProcessedVIN
+        self._isAddedToCalendar = isAddedToCalendar
         self.shouldCheckSupabaseCacheOnAppear = shouldCheckSupabaseCacheOnAppear
         self._mileageVIN      = State(initialValue: normalizeVIN(entry.vin))
     }
@@ -1634,21 +1693,23 @@ struct ExtractionFlowView: View {
                         .padding(.bottom, 22)
 
                     Text(overlayVehicleTitle)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.30))
-                        .kerning(1.4)
+                        .font(.system(size: exState == .success ? 29 : 11, weight: exState == .success ? .bold : .semibold, design: exState == .success ? .rounded : .default))
+                        .foregroundColor(exState == .success ? .white.opacity(0.96) : .white.opacity(0.30))
+                        .kerning(exState == .success ? -0.9 : 1.4)
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 20)
-                        .padding(.bottom, 8)
+                        .padding(.bottom, exState == .success ? 10 : 8)
 
-                    Text(overlayMessage)
-                        .font(.system(size: 22, weight: .bold))
-                        .foregroundColor(.white)
-                        .kerning(-0.6)
-                        .multilineTextAlignment(.center)
-                        .padding(.bottom, 10)
+                    if exState != .success {
+                        Text(overlayMessage)
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundColor(.white)
+                            .kerning(-0.6)
+                            .multilineTextAlignment(.center)
+                            .padding(.bottom, 10)
+                    }
 
                     if exState == .success {
                         Text(mileageVIN)
@@ -1663,12 +1724,6 @@ struct ExtractionFlowView: View {
 
                     if exState == .success {
                         // Success state
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 40))
-                            .foregroundColor(gold)
-                            .shadow(color: gold.opacity(0.5), radius: 12)
-                            .padding(.bottom, 20)
-
                         // Obtained data cards
                         let resultInfo = supabaseService.odoByVIN[mileageVIN]
                         HStack(spacing: 10) {
@@ -1720,6 +1775,30 @@ struct ExtractionFlowView: View {
                         }
                         .padding(.bottom, 20)
 
+                        VStack(spacing: 10) {
+                            if let inspectionDate = resultInfo?.testDate.dateOnly, !inspectionDate.isEmpty {
+                                let relative = inspectionDate
+                                    .timeAgoShort()
+                                    .replacingOccurrences(of: "(", with: "")
+                                    .replacingOccurrences(of: ")", with: "")
+                                let relativeText = relative.isEmpty ? nil : relative
+
+                                successMetaCard(
+                                    title: "LAST INSPECTION",
+                                    value: relativeText.map { "\(inspectionDate) (\($0))" } ?? inspectionDate
+                                )
+                            }
+
+                            if let auctionLine = auctionLocationLine {
+                                successMetaCard(
+                                    title: "AUCTION",
+                                    value: auctionLine,
+                                    emphasizeGold: true
+                                )
+                            }
+                        }
+                        .padding(.bottom, 18)
+
                         if addedToFavorites {
                             // Post-add confirmation
                             VStack(spacing: 14) {
@@ -1728,12 +1807,21 @@ struct ExtractionFlowView: View {
                                         .font(.system(size: 20))
                                         .foregroundColor(gold)
                                         .scaleEffect(heartScale)
-                                    Text("Added to Favorites!")
-                                        .font(.system(size: 15, weight: .semibold))
-                                        .foregroundColor(gold)
+                                Text("Moved to Favorites")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundColor(gold)
                                 }
 
-                                Button { dismiss() } label: {
+                                Text(favoritesConfirmationMessage)
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.44))
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal, 22)
+
+                                Button {
+                                    commitFavoriteIfNeeded()
+                                    dismiss()
+                                } label: {
                                     Text("OK")
                                         .font(.system(size: 15, weight: .semibold))
                                         .foregroundColor(Color(hex: "#0A0A0A"))
@@ -1745,63 +1833,70 @@ struct ExtractionFlowView: View {
                                 }
                             }
                         } else if isAlreadyFavorite {
-                            Button { dismiss() } label: {
-                                Text("OK")
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundColor(Color(hex: "#0A0A0A"))
-                                    .padding(.horizontal, 48)
-                                    .padding(.vertical, 12)
-                                    .background(gold)
-                                    .clipShape(Capsule())
-                                    .shadow(color: gold.opacity(0.35), radius: 8)
-                            }
+                            successActionRow
                         } else {
                             // Offer to add to favorites
                             VStack(spacing: 10) {
-                                Text("Save to favorites?")
-                                    .font(.system(size: 12, weight: .medium))
+                                Text("Interested in this vehicle?")
+                                    .font(.system(size: 11.5, weight: .medium))
                                     .foregroundColor(.white.opacity(0.36))
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal, 18)
 
                                 HStack(spacing: 12) {
                                     Button {
-                                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                        supabaseService.addFavoriteLocally(cardKey)
-                                        supabaseService.syncUpsertFavorite(entry: entry)
-                                        withAnimation(.interpolatingSpring(stiffness: 180, damping: 10)) {
-                                            addedToFavorites = true
-                                            heartScale = 1.4
-                                        }
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                                            withAnimation(.easeOut(duration: 0.3)) {
-                                                heartScale = 1.0
-                                            }
-                                        }
+                                        confirmInterest(saveToFavorites: true, addedToCalendar: false)
                                     } label: {
                                         HStack(spacing: 6) {
                                             Image(systemName: "heart.fill")
                                             Text("Add to Favorites")
                                         }
-                                        .font(.system(size: 14, weight: .semibold))
+                                        .font(.system(size: 13, weight: .semibold))
                                         .foregroundColor(Color(hex: "#0A0A0A"))
                                         .padding(.horizontal, 20)
                                         .padding(.vertical, 11)
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.9)
                                         .background(gold)
                                         .clipShape(Capsule())
                                         .shadow(color: gold.opacity(0.30), radius: 6)
                                     }
                                     .buttonStyle(.plain)
 
-                                    Button { dismiss() } label: {
-                                        Text("Skip")
-                                            .font(.system(size: 14, weight: .medium))
-                                            .foregroundColor(.white.opacity(0.38))
-                                            .padding(.horizontal, 20)
-                                            .padding(.vertical, 11)
-                                            .background(Color.white.opacity(0.07))
+                                    if !isAddedToCalendar {
+                                        Button {
+                                            pendingCalendarEntry = entry
+                                        } label: {
+                                            HStack(spacing: 6) {
+                                                Image(systemName: "calendar.badge.plus")
+                                                Text("Add to Calendar")
+                                            }
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundColor(gold.opacity(0.92))
+                                            .padding(.horizontal, 18)
+                                            .padding(.vertical, 10)
+                                            .frame(maxWidth: .infinity)
+                                            .background(Color.white.opacity(0.05))
                                             .clipShape(Capsule())
+                                            .overlay(
+                                                Capsule()
+                                                    .strokeBorder(gold.opacity(0.16), lineWidth: 0.5)
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
                                     }
-                                    .buttonStyle(.plain)
                                 }
+
+                                Button { dismiss() } label: {
+                                    Text("Skip")
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundColor(.white.opacity(0.38))
+                                        .padding(.horizontal, 20)
+                                        .padding(.vertical, 11)
+                                        .background(Color.white.opacity(0.07))
+                                        .clipShape(Capsule())
+                                }
+                                .buttonStyle(.plain)
                             }
                         }
 
@@ -1927,6 +2022,14 @@ struct ExtractionFlowView: View {
             }
         }
         .animation(.easeInOut(duration: 0.35), value: exState)
+        .sheet(item: $pendingCalendarEntry) { e in
+            CalendarConfirmationSheet(label: calendarEntryDetails) {
+                confirmInterest(saveToFavorites: true, addedToCalendar: true)
+                addToCalendar(entry: e)
+                pendingCalendarEntry = nil
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            }
+        }
         .onAppear {
             glowPulse = true
             withAnimation(.easeOut(duration: 0.5)) { contentOpacity = 1 }
@@ -1976,6 +2079,103 @@ struct ExtractionFlowView: View {
         }
     }
 
+    private var auctionLocationLine: String? {
+        let address = sanitizedAddr(entry.lotAddress).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !address.isEmpty else { return nil }
+        let compactTime = parseAuctionDateWithTime(entry.dateScheduled, timeStr: entry.time)?.compactAuctionTime() ?? ""
+        return compactTime.isEmpty ? address : "\(address) · \(compactTime)"
+    }
+
+    private func successMetaCard(title: String, value: String, emphasizeGold: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(.white.opacity(0.28))
+                .kerning(1.15)
+
+            Text(value)
+                .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                .foregroundColor(emphasizeGold ? gold.opacity(0.88) : .white.opacity(0.52))
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.white.opacity(0.045))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(
+                    emphasizeGold ? gold.opacity(0.18) : Color.white.opacity(0.06),
+                    lineWidth: 0.5
+                )
+        )
+    }
+
+    private func confirmInterest(saveToFavorites: Bool, addedToCalendar: Bool) {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
+        shouldCommitFavoriteOnDismiss = saveToFavorites
+
+        favoritesConfirmationMessage = addedToCalendar
+            ? "This vehicle was moved out of this report, added to your calendar, and saved in Favorites so you can find it again anytime."
+            : "This vehicle was moved out of this report and saved in Favorites, where you can find it anytime."
+
+        withAnimation(.interpolatingSpring(stiffness: 180, damping: 10)) {
+            addedToFavorites = true
+            heartScale = 1.4
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            withAnimation(.easeOut(duration: 0.3)) {
+                heartScale = 1.0
+            }
+        }
+    }
+
+    private func commitFavoriteIfNeeded() {
+        guard shouldCommitFavoriteOnDismiss else { return }
+        shouldCommitFavoriteOnDismiss = false
+        supabaseService.addFavoriteLocally(cardKey)
+        supabaseService.syncUpsertFavorite(entry: entry)
+    }
+
+    @ViewBuilder
+    private var successActionRow: some View {
+        HStack(spacing: 12) {
+            if !isAddedToCalendar {
+                Button {
+                    pendingCalendarEntry = entry
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "calendar.badge.plus")
+                        Text("Add to Calendar")
+                    }
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Color(hex: "#0A0A0A"))
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 11)
+                    .background(gold)
+                    .clipShape(Capsule())
+                    .shadow(color: gold.opacity(0.30), radius: 6)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Button { dismiss() } label: {
+                Text(isAddedToCalendar ? "OK" : "Skip")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white.opacity(0.38))
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 11)
+                    .background(Color.white.opacity(0.07))
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
     private func handleOdo(odo: String, date: String, realModel: String?) {
         DispatchQueue.main.async {
             guard !mileageVIN.isEmpty else { return }
@@ -1993,6 +2193,119 @@ struct ExtractionFlowView: View {
             spvOdo  = odo
             exState = .fetchingPrice
             startWatchdog(for: .fetchingPrice, token: cancelToken)
+        }
+    }
+
+    private func sanitizedAddr(_ lotAddress: String) -> String {
+        let t = lotAddress
+            .replacingOccurrences(of: "*", with: " ")
+            .replacingOccurrences(of: "\u{00A0}", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return "" }
+        let lower = t.lowercased()
+        let hasDigit = t.range(of: "\\d", options: .regularExpression) != nil
+        let hasZip = t.range(of: #"\b\d{5}(?:-\d{4})?\b"#, options: .regularExpression) != nil
+        let hasStreet = lower.range(of: #"\b(st|ave|rd|dr|blvd|ln|lane|way|pkwy|parkway|court|ct|cir|circle|trl|trail|hwy|highway|suite|ste)\b"#, options: .regularExpression) != nil
+        let looksBusiness = lower.contains(" inc") || lower.contains(" inc.") ||
+            lower.contains(" llc") || lower.contains(" llc.") ||
+            lower.contains(" co ") || lower.contains(" company") ||
+            lower.contains(" towing") || lower.contains(" storage") ||
+            lower.contains(" motors") || lower.contains(" auto ")
+        if looksBusiness && !(hasStreet || hasZip || hasDigit) { return "" }
+        if !(hasStreet || hasZip || hasDigit) { return "" }
+        return t
+    }
+
+    private func parseAuctionDateWithTime(_ dateStr: String, timeStr: String?) -> Date? {
+        let base = dateStr.trimmingCharacters(in: .whitespacesAndNewlines)
+        let time = (timeStr ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = .current
+        if !time.isEmpty {
+            for f in ["MM/dd/yyyy h:mm:ss a","MM/dd/yyyy h:mm a","M/d/yyyy h:mm:ss a","M/d/yyyy h:mm a",
+                      "MM/dd/yy h:mm:ss a","MM/dd/yy h:mm a","M/d/yy h:mm:ss a","M/d/yy h:mm a"] {
+                df.dateFormat = f
+                if let d = df.date(from: "\(base) \(time)") { return d }
+            }
+        }
+        for f in ["MM/dd/yyyy","M/d/yyyy","MM/dd/yy","M/d/yy"] {
+            df.dateFormat = f
+            if let d = df.date(from: base) { return d }
+        }
+        return nil
+    }
+
+    private var calendarEntryDetails: String {
+        var lines = ["\(normalizedYear(entry.year)) \(overlayVehicleTitle.replacingOccurrences(of: normalizedYear(entry.year) + " ", with: "")) - \(entry.dateScheduled)"]
+        let address = entry.lotAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !address.isEmpty { lines.append(address) }
+        if let time = entry.time?.trimmingCharacters(in: .whitespacesAndNewlines), !time.isEmpty {
+            lines.append("Time: \(time)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func addToCalendar(entry e: HPDEntry) {
+        let store = EKEventStore()
+        let requestHandler: EKEventStoreRequestAccessCompletionHandler = { granted, _ in
+            guard granted else { return }
+            let event = EKEvent(eventStore: store)
+            event.title = "\(normalizedYear(e.year)) \(brandDisplayName(for: e.make)) \(e.model) - \(e.dateScheduled)"
+            event.calendar = store.defaultCalendarForNewEvents
+            if let d = parseAuctionDateWithTime(e.dateScheduled, timeStr: e.time) {
+                event.startDate = d
+                event.endDate = d.addingTimeInterval(60 * 60)
+            }
+            let addrForCal = sanitizedAddr(e.lotAddress)
+            event.location = e.lotAddress
+            event.notes = [e.vin, addrForCal].filter { !$0.isEmpty }.joined(separator: "\n")
+
+            let finalizeSave = {
+                do {
+                    try store.save(event, span: .thisEvent)
+                    DispatchQueue.main.async {
+                        isAddedToCalendar = true
+                        let ti = Int(event.startDate.timeIntervalSinceReferenceDate)
+                        if let url = URL(string: "calshow:\(ti)") {
+                            UIApplication.shared.open(url)
+                        }
+                    }
+                } catch {}
+            }
+
+            if !addrForCal.isEmpty {
+                let request = MKLocalSearch.Request()
+                request.naturalLanguageQuery = addrForCal
+                MKLocalSearch(request: request).start { response, _ in
+                    if let item = response?.mapItems.first {
+                        let location: CLLocation
+                        if #available(iOS 26.0, *) {
+                            location = item.location
+                        } else {
+                            location = CLLocation(
+                                latitude: item.placemark.coordinate.latitude,
+                                longitude: item.placemark.coordinate.longitude
+                            )
+                        }
+                        let structured = EKStructuredLocation(title: addrForCal)
+                        structured.geoLocation = location
+                        structured.radius = 100
+                        event.structuredLocation = structured
+                    }
+                    finalizeSave()
+                }
+            } else {
+                finalizeSave()
+            }
+        }
+
+        if #available(iOS 17.0, *) {
+            store.requestWriteOnlyAccessToEvents(completion: requestHandler)
+        } else {
+            store.requestAccess(to: .event, completion: requestHandler)
         }
     }
 

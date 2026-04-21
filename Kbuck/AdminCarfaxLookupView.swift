@@ -41,6 +41,9 @@ struct AdminCarfaxLookupView: View {
     @State private var detectedVehicle: AdminDetectedVehicle?
     @State private var lastResolvedVIN: String?
     @State private var lastDecodeSource: String?
+    @State private var showExtractionFlow = false
+    @State private var lastProcessedVIN: String?
+    @State private var isAddedToCalendar = false
     @FocusState private var isVINFieldFocused: Bool
 
     private var normalizedVINInput: String {
@@ -54,6 +57,60 @@ struct AdminCarfaxLookupView: View {
 
     private var canRequestCarfax: Bool {
         detectedVehicle?.vin == normalizedVINInput && normalizedVINInput.count == 17 && !isFetching
+    }
+
+    private var carfaxErrorAlertText: String {
+        errorMessage ?? "Unable to load the Carfax report."
+    }
+
+    private var savedReportAlertText: String {
+        "This VIN already has a saved report."
+    }
+
+    private var savedReportAlertMessage: Text {
+        Text(savedReportAlertText)
+    }
+
+    private var carfaxErrorAlertMessage: Text {
+        Text(carfaxErrorAlertText)
+    }
+
+    private var isShowingCarfaxError: Binding<Bool> {
+        Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )
+    }
+
+    private var isShowingSelectedReport: Binding<Bool> {
+        Binding(
+            get: { selectedReportURL != nil },
+            set: { if !$0 { selectedReportURL = nil } }
+        )
+    }
+
+    private var canRequestQuickData: Bool {
+        detectedVehicle?.vin == normalizedVINInput && normalizedVINInput.count == 17
+    }
+
+    private var currentOdoInfo: OdoInfo? {
+        guard !normalizedVINInput.isEmpty else { return nil }
+        return supabaseService.odoByVIN[normalizedVINInput]
+    }
+
+    private var extractionEntry: HPDEntry? {
+        guard let detectedVehicle else { return nil }
+        return HPDEntry(
+            dateScheduled: "",
+            time: nil,
+            lotName: "Carfax Desk",
+            lotAddress: "",
+            year: detectedVehicle.year,
+            make: detectedVehicle.make,
+            model: detectedVehicle.model,
+            vin: detectedVehicle.vin,
+            plate: ""
+        )
     }
 
     private var cardBackground: Color {
@@ -79,30 +136,90 @@ struct AdminCarfaxLookupView: View {
         return "Awaiting VIN"
     }
 
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                AppChromeBackground()
-                .ignoresSafeArea()
-
-                ScrollView {
-                    VStack(spacing: 18) {
-                        heroCard
-                        vinEntryCard
-                        detectedVehicleCard
+    private var contentBody: some View {
+        ScrollView {
+            VStack(spacing: 18) {
+                heroCard
+                vinEntryCard
+                detectedVehicleCard
 
                 if let reportURL = existingReportURL {
                     savedReportCard(reportURL: reportURL)
                 }
+            }
+            .padding(16)
+            .padding(.bottom, 28)
+        }
+        .background(Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            isVINFieldFocused = false
+        }
+    }
+
+    @ViewBuilder
+    private var selectedReportSheetContent: some View {
+        if let url = selectedReportURL {
+            NavigationStack {
+                SafariControllerView(url: url)
+                    .ignoresSafeArea()
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button {
+                                UIApplication.shared.open(url)
+                            } label: {
+                                Image(systemName: "safari")
+                            }
+                        }
                     }
-                    .padding(16)
-                    .padding(.bottom, 28)
-                }
-                .background(Color.clear)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    isVINFieldFocused = false
-                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var savedReportAlertActions: some View {
+        if let reportURL = existingReportURL {
+            Button("Open Saved Report") {
+                selectedReportURL = reportURL
+            }
+        }
+
+        Button("Request New Report") {
+            showFetchConfirmation = true
+        }
+
+        Button("Cancel", role: .cancel) {}
+    }
+
+    @ViewBuilder
+    private func fetchConfirmationActions(for vehicle: AdminDetectedVehicle) -> some View {
+        Button("Cancel", role: .cancel) {}
+        Button("Request Report") {
+            Task { await fetchReport(for: vehicle) }
+        }
+    }
+
+    private func fetchConfirmationMessage(for vehicle: AdminDetectedVehicle) -> Text {
+        Text("Request Carfax for \(vehicle.displayTitle)?\nVIN: \(vehicle.vin)")
+    }
+
+    @ToolbarContentBuilder
+    private var keyboardToolbarContent: some ToolbarContent {
+        ToolbarItemGroup(placement: .keyboard) {
+            Spacer()
+            Button("Done") {
+                isVINFieldFocused = false
+            }
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                AppChromeBackground()
+                    .ignoresSafeArea()
+
+                contentBody
             }
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
@@ -118,63 +235,35 @@ struct AdminCarfaxLookupView: View {
                 isPresented: $showFetchConfirmation,
                 presenting: detectedVehicle
             ) { vehicle in
-                Button("Cancel", role: .cancel) {}
-                Button("Request Report") {
-                    Task { await fetchReport(for: vehicle) }
-                }
+                fetchConfirmationActions(for: vehicle)
             } message: { vehicle in
-                Text("Request Carfax for \(vehicle.displayTitle)?\nVIN: \(vehicle.vin)")
+                fetchConfirmationMessage(for: vehicle)
             }
             .alert("Saved Report Found", isPresented: $showSavedReportAlert) {
-                if let reportURL = existingReportURL {
-                    Button("Open Saved Report") {
-                        selectedReportURL = reportURL
-                    }
-                }
-                Button("Request New Report") {
-                    showFetchConfirmation = true
-                }
-                Button("Cancel", role: .cancel) {}
+                savedReportAlertActions
             } message: {
-                Text("This VIN already has a saved report.")
+                savedReportAlertMessage
             }
             .alert(
                 "Carfax Error",
-                isPresented: Binding(
-                    get: { errorMessage != nil },
-                    set: { if !$0 { errorMessage = nil } }
-                )
+                isPresented: isShowingCarfaxError
             ) {
                 Button("OK", role: .cancel) {}
             } message: {
-                Text(errorMessage ?? "Unable to load the Carfax report.")
+                carfaxErrorAlertMessage
             }
-            .sheet(isPresented: Binding(
-                get: { selectedReportURL != nil },
-                set: { if !$0 { selectedReportURL = nil } }
-            )) {
-                if let url = selectedReportURL {
-                    NavigationStack {
-                        SafariControllerView(url: url)
-                            .ignoresSafeArea()
-                            .toolbar {
-                                ToolbarItem(placement: .topBarTrailing) {
-                                    Button {
-                                        UIApplication.shared.open(url)
-                                    } label: {
-                                        Image(systemName: "safari")
-                                    }
-                                }
-                            }
-                    }
-                }
+            .sheet(isPresented: isShowingSelectedReport) {
+                selectedReportSheetContent
             }
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") {
-                        isVINFieldFocused = false
-                    }
+            .toolbar { keyboardToolbarContent }
+            .fullScreenCover(isPresented: $showExtractionFlow) {
+                if let extractionEntry {
+                    ExtractionFlowView(
+                        entry: extractionEntry,
+                        lastProcessedVIN: $lastProcessedVIN,
+                        isAddedToCalendar: $isAddedToCalendar
+                    )
+                    .environmentObject(supabaseService)
                 }
             }
         }
@@ -210,9 +299,10 @@ struct AdminCarfaxLookupView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
 
-            HStack(spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
                 statusPill(title: lookupStateLabel, systemImage: "waveform.path.ecg", tint: isResolvingVIN ? .blue : accentColor)
                 metricPill(title: "Vault", value: "\(carfaxVault.savedReports.count)")
+                quickDataButton
             }
         }
         .padding(20)
@@ -232,6 +322,19 @@ struct AdminCarfaxLookupView: View {
             Text("VIN Input")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Color.primary.opacity(0.48))
+
+            HStack(spacing: 10) {
+                quickDataMetricCard(
+                    title: "Miles",
+                    value: currentOdoInfo?.odometer.formatWithCommas() ?? "—",
+                    subtitle: currentOdoInfo?.odometer == nil ? nil : "miles"
+                )
+                quickDataMetricCard(
+                    title: "Price",
+                    value: currentOdoInfo?.privateValue.formatAsCurrency() ?? "—",
+                    subtitle: currentOdoInfo?.privateValue == nil ? nil : "private"
+                )
+            }
 
             HStack(spacing: 12) {
                 Image(systemName: "number.square.fill")
@@ -282,6 +385,31 @@ struct AdminCarfaxLookupView: View {
             RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .stroke(cardBorder, lineWidth: 0.5)
         )
+    }
+
+    private var quickDataButton: some View {
+        Button {
+            isVINFieldFocused = false
+            showExtractionFlow = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "fuelpump.fill")
+                Text("Miles / Price")
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(canRequestQuickData ? Color.black.opacity(0.82) : Color.primary.opacity(0.42))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                canRequestQuickData
+                    ? accentColor
+                    : Color.primary.opacity(colorScheme == .dark ? 0.09 : 0.05)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(!canRequestQuickData)
+        .opacity(canRequestQuickData ? 1 : 0.7)
     }
 
     @ViewBuilder
@@ -437,6 +565,29 @@ struct AdminCarfaxLookupView: View {
     }
 
     private func metricPill(title: String, value: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "archivebox.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(accentColor)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title.uppercased())
+                    .font(.system(size: 9, weight: .semibold))
+                    .tracking(1.2)
+                    .foregroundStyle(Color.primary.opacity(0.34))
+
+                Text(value)
+                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color.primary.opacity(0.82))
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.primary.opacity(colorScheme == .dark ? 0.09 : 0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func quickDataMetricCard(title: String, value: String, subtitle: String?) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title.uppercased())
                 .font(.system(size: 9, weight: .semibold))
@@ -444,13 +595,23 @@ struct AdminCarfaxLookupView: View {
                 .foregroundStyle(Color.primary.opacity(0.34))
 
             Text(value)
-                .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                .font(.system(size: 16, weight: .semibold, design: .monospaced))
                 .foregroundStyle(Color.primary.opacity(0.82))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+
+            if let subtitle {
+                Text(subtitle.uppercased())
+                    .font(.system(size: 8, weight: .medium))
+                    .tracking(1)
+                    .foregroundStyle(Color.primary.opacity(0.28))
+            }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
         .background(Color.primary.opacity(colorScheme == .dark ? 0.09 : 0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private func resolveVehicleIfNeeded(force: Bool = false) async {

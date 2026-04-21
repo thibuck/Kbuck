@@ -414,13 +414,17 @@ func vehicleMatchesSearch(_ query: String, entry: HPDEntry, odoInfo: OdoInfo? = 
 
     let makeDisplay = brandDisplayName(for: entry.make)
     let realModel = odoInfo?.realModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let normalizedModel = normalizedModelName(for: entry.model, make: entry.make)
+    let normalizedVehicleTitle = "\(normalizedYear(entry.year)) \(makeDisplay) \(normalizedModel)"
     let searchableFields = [
         entry.vin,
         normalizedYear(entry.year),
         entry.make,
         makeDisplay,
         entry.model,
+        normalizedModel,
         realModel,
+        normalizedVehicleTitle,
         entry.lotName,
         entry.lotAddress,
         entry.dateScheduled

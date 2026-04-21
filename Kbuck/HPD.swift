@@ -2305,10 +2305,10 @@ struct HPDView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     Text(title)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Color.primary.opacity(0.88))
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.82)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.62)
                         .allowsTightening(true)
                         .layoutPriority(1)
                 }

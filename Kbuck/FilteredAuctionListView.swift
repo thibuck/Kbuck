@@ -29,7 +29,7 @@ private struct SwipeBackEnabler: UIViewControllerRepresentable {
 struct FilteredAuctionListView: View {
 
     let date:     String
-    let location: String
+    let location: String?
     let brand:    String?
     let allowedBrands: [String]?
     let initialSearchText: String
@@ -48,7 +48,7 @@ struct FilteredAuctionListView: View {
 
     init(
         date: String,
-        location: String,
+        location: String?,
         brand: String?,
         allowedBrands: [String]? = nil,
         initialSearchText: String = ""
@@ -68,16 +68,14 @@ struct FilteredAuctionListView: View {
               let all = try? JSONDecoder().decode([HPDEntry].self, from: hpdCachedEntriesData)
         else { return [] }
 
-        let locationKey = streetKey(location)
+        let locationKey = location.map(streetKey)
         let brandUpper  = brand?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         let allowedBrandSet = Set((allowedBrands ?? []).map {
             $0.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         })
-        let shouldHideFavorites = searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-
         return all.filter { entry in
             let sameDate     = entry.dateScheduled.trimmingCharacters(in: .whitespacesAndNewlines) == date
-            let sameLocation = streetKey(entry.lotAddress) == locationKey
+            let sameLocation = locationKey.map { streetKey(entry.lotAddress) == $0 } ?? true
             let entryMake = entry.make.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
             let sameBrand: Bool
             if let brandUpper {
@@ -87,8 +85,7 @@ struct FilteredAuctionListView: View {
             } else {
                 sameBrand = true
             }
-            let isFavorite   = supabaseService.favorites.contains(normalizeVIN(entry.vin))
-            return sameDate && sameLocation && sameBrand && (!shouldHideFavorites || !isFavorite)
+            return sameDate && sameLocation && sameBrand
         }
     }
 
@@ -124,7 +121,7 @@ struct FilteredAuctionListView: View {
         if let allowedBrands, allowedBrands.count == 1, let onlyBrand = allowedBrands.first {
             return brandDisplayName(for: onlyBrand)
         }
-        return location
+        return location ?? "All locations"
     }
 
     private var navigationBrandName: String {
@@ -209,7 +206,7 @@ struct FilteredAuctionListView: View {
                             ForEach(displayedVehicles) { entry in
                                 VehicleCardView(
                                     entry: entry,
-                                    showAddress: false,
+                                    showAddress: true,
                                     showQuickInventory: false,
                                     showBrandLogo: false,
                                     shouldLoadVINCacheOnAppear: false,

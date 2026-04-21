@@ -11,6 +11,9 @@ struct LoginView: View {
     @State private var acceptedTerms: Bool = false
     @State private var showTerms: Bool = false
     @State private var hasOpenedTerms: Bool = false
+    @State private var testerTapCount: Int = 0
+    @State private var testerTapToken = UUID()
+    @State private var showTesterLogin: Bool = false
     @AppStorage("hpdUserBanned") private var isUserBanned: Bool = false
 
     var body: some View {
@@ -29,6 +32,11 @@ struct LoginView: View {
                         .frame(width: 100, height: 100)
                         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
                         .shadow(color: Color.primary.opacity(0.15), radius: 20, x: 0, y: 10)
+                        .onTapGesture {
+#if DEBUG
+                            registerTesterTap()
+#endif
+                        }
 
                     VStack(spacing: 8) {
                         Text("HPD AUCTION")
@@ -167,22 +175,23 @@ struct LoginView: View {
                 }
 
 #if DEBUG
-                // ── TEMPORARY DEV BACKDOOR ───────────────
-                Button("Login as Test User") {
-                    Task {
-                        do {
-                            try await supabase.auth.signIn(
-                                email: "test@kbuck.com",
-                                password: "Kbuck123456"
-                            )
-                        } catch {
-                            authError = error.localizedDescription
+                if showTesterLogin {
+                    Button("Login as Test User") {
+                        Task {
+                            do {
+                                try await supabase.auth.signIn(
+                                    email: "test@kbuck.com",
+                                    password: "Kbuck123456"
+                                )
+                            } catch {
+                                authError = error.localizedDescription
+                            }
                         }
                     }
+                    .tint(.red)
+                    .buttonStyle(.bordered)
+                    .padding(.top, 24)
                 }
-                .tint(.red)
-                .buttonStyle(.bordered)
-                .padding(.top, 24)
 #endif
 
                 Spacer()
@@ -229,6 +238,26 @@ struct LoginView: View {
             .compactMap { String(format: "%02x", $0) }
             .joined()
     }
+
+#if DEBUG
+    private func registerTesterTap() {
+        let token = UUID()
+        testerTapToken = token
+        testerTapCount += 1
+
+        if testerTapCount >= 5 {
+            showTesterLogin = true
+            testerTapCount = 0
+            return
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            guard testerTapToken == token else { return }
+            testerTapCount = 0
+        }
+    }
+#endif
 }
 
 #Preview {
