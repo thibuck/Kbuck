@@ -1,6 +1,7 @@
 import SwiftUI
 import Supabase
 import UIKit
+import LocalAuthentication
 
 private struct AdminVINMetadataRow: Decodable {
     let year_make_model: String?
@@ -109,7 +110,8 @@ struct AdminCarfaxLookupView: View {
             make: detectedVehicle.make,
             model: detectedVehicle.model,
             vin: detectedVehicle.vin,
-            plate: ""
+            plate: "",
+            source: .hpd
         )
     }
 
@@ -195,7 +197,7 @@ struct AdminCarfaxLookupView: View {
     private func fetchConfirmationActions(for vehicle: AdminDetectedVehicle) -> some View {
         Button("Cancel", role: .cancel) {}
         Button("Request Report") {
-            Task { await fetchReport(for: vehicle) }
+            Task { await authenticateAndFetchReport(for: vehicle) }
         }
     }
 
@@ -670,6 +672,51 @@ struct AdminCarfaxLookupView: View {
             selectedReportURL = carfaxVault.getReportURL(for: vehicle.vin)
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func authenticateAndFetchReport(for vehicle: AdminDetectedVehicle) async {
+        do {
+            try await requestBiometricAuthorization()
+            await fetchReport(for: vehicle)
+        } catch {
+            await MainActor.run {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func requestBiometricAuthorization() async throws {
+        let context = LAContext()
+        context.localizedCancelTitle = "Cancel"
+
+        var authError: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &authError) else {
+            throw authError ?? NSError(
+                domain: "AdminCarfaxLookupView",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Face ID is not available on this device right now."]
+            )
+        }
+
+        let reason = "Confirm your identity to request this Carfax report."
+
+        let success = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, Error>) in
+            context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { granted, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: granted)
+                }
+            }
+        }
+
+        guard success else {
+            throw NSError(
+                domain: "AdminCarfaxLookupView",
+                code: -2,
+                userInfo: [NSLocalizedDescriptionKey: "Face ID confirmation was canceled."]
+            )
         }
     }
 

@@ -82,6 +82,12 @@ private struct BrandFilterOption: Identifiable {
     let count: Int
 }
 
+private struct AuctionSourceOption: Identifiable {
+    let id: AuctionSource
+    let source: AuctionSource
+    let count: Int
+}
+
 // MARK: - View
 
 struct HomeSummaryView: View {
@@ -90,11 +96,14 @@ struct HomeSummaryView: View {
     @Binding var targetLocationFilter: String?
 
     @AppStorage("hpdCachedEntries") private var hpdCachedEntriesData: Data = Data()
+    @AppStorage("sheriffCachedEntries") private var sheriffCachedEntriesData: Data = Data()
+    @AppStorage("brandsSelectedAuctionSource") private var selectedAuctionSourceRaw: String = AuctionSource.hpd.rawValue
     @AppStorage("hpdRefreshTrigger") private var hpdRefreshTrigger: Int = 0
     @AppStorage("vehicleCacheWarmupInProgress") private var vehicleCacheWarmupInProgress: Bool = false
     @State private var cachedGroupedSummaries: [DateCard] = []
     @State private var cachedActiveVehicleCount: Int = 0
     @State private var cachedBrandOptions: [BrandFilterOption] = []
+    @State private var cachedSourceOptions: [AuctionSourceOption] = []
     @State private var hasBaseAuctionData: Bool = false
 
     // MARK: - Collapse state
@@ -113,6 +122,15 @@ struct HomeSummaryView: View {
     @AppStorage("userRole") private var userRole: String = "user"
     @State private var showQuotaSheet: Bool = false
     @State private var showBrandLimitAlert: Bool = false
+
+    private var selectedAuctionSource: AuctionSource {
+        get { AuctionSource(rawValue: selectedAuctionSourceRaw) ?? .hpd }
+        nonmutating set { selectedAuctionSourceRaw = newValue.rawValue }
+    }
+
+    private var totalCachedAuctionVehicleCount: Int {
+        cachedSourceOptions.reduce(0) { $0 + $1.count }
+    }
 
     private var activeHomeSearchText: String {
         brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -358,12 +376,16 @@ struct HomeSummaryView: View {
     }
     
     private func recomputeSummaries() {
-        guard !hpdCachedEntriesData.isEmpty,
-              let decoded = try? JSONDecoder().decode([HPDEntry].self, from: hpdCachedEntriesData)
-        else {
+        let decoded = mergedAuctionEntries(
+            decodeAuctionEntries(hpdCachedEntriesData),
+            decodeAuctionEntries(sheriffCachedEntriesData)
+        )
+
+        guard !decoded.isEmpty else {
             cachedGroupedSummaries = []
             cachedActiveVehicleCount = 0
             cachedBrandOptions = []
+            cachedSourceOptions = []
             hasBaseAuctionData = false
             expandedDates = []
             expandedLocations = []
@@ -371,13 +393,21 @@ struct HomeSummaryView: View {
         }
 
         hasBaseAuctionData = !decoded.isEmpty
+        cachedSourceOptions = AuctionSource.allCases.map { source in
+            AuctionSourceOption(
+                id: source,
+                source: source,
+                count: decoded.filter { $0.source == source && !isDateInPast($0.dateScheduled) }.count
+            )
+        }
 
         let searchQuery = brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceEntries = decoded.filter { $0.source == selectedAuctionSource }
         let searchFilteredEntries: [HPDEntry]
         if searchQuery.isEmpty {
-            searchFilteredEntries = decoded
+            searchFilteredEntries = sourceEntries
         } else {
-            searchFilteredEntries = decoded.filter { entry in
+            searchFilteredEntries = sourceEntries.filter { entry in
                 vehicleMatchesSearch(searchQuery, entry: entry)
             }
         }
@@ -432,6 +462,8 @@ struct HomeSummaryView: View {
                                 placeholder: "Year, make, model or VIN"
                             )
 
+                            auctionSourceCard
+
                             if hasBrandFilterAccess {
                                 brandFilterCard
                             }
@@ -460,7 +492,7 @@ struct HomeSummaryView: View {
                                 .controlSize(.small)
                         }
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("HPD AUCTION")
+                            Text(selectedAuctionSource.displayName.uppercased())
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundColor(Color.primary.opacity(0.32))
                                 .kerning(2)
@@ -492,7 +524,7 @@ struct HomeSummaryView: View {
                                 }
                                 .clipShape(Capsule())
 
-                            Text("\(cachedActiveVehicleCount) listings")
+                            Text("\(totalCachedAuctionVehicleCount) listings")
                                 .font(.system(size: 11, weight: .regular))
                                 .foregroundColor(Color.primary.opacity(0.40))
                         }
@@ -549,6 +581,9 @@ struct HomeSummaryView: View {
             }
             recomputeSummaries()
         }
+        .onChange(of: selectedAuctionSourceRaw) { _, _ in
+            recomputeSummaries()
+        }
         .onChange(of: userRole) { _, _ in
             if !hasBrandFilterAccess {
                 selectedBrandFilters = []
@@ -558,6 +593,37 @@ struct HomeSummaryView: View {
     }
 
     // MARK: - Platinum brand filter
+
+    private var auctionSourceCard: some View {
+        HStack(spacing: 10) {
+            ForEach(cachedSourceOptions) { option in
+                let isSelected = option.source == selectedAuctionSource
+
+                Button {
+                    selectedAuctionSource = option.source
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(option.source.shortLabel)
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("\(option.count)")
+                            .font(.system(size: 12, weight: .medium))
+                            .monospacedDigit()
+                            .foregroundStyle(Color.primary.opacity(isSelected ? 0.62 : 0.40))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(isSelected ? homeBrandChipSelectedBackground : homeBrandChipBackground)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Color.primary.opacity(isSelected ? 0.14 : 0.08), lineWidth: 0.5)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
 
     private var brandFilterCard: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -642,15 +708,7 @@ struct HomeSummaryView: View {
     }
 
     private func scheduleBrandFilterAutoCollapse() {
-        let token = UUID()
-        brandFilterAutoCollapseToken = token
-
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 7_000_000_000)
-            guard brandFilterAutoCollapseToken == token, isBrandFilterExpanded else { return }
-            guard brandSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-            isBrandFilterExpanded = false
-        }
+        brandFilterAutoCollapseToken = UUID()
     }
 
     private func brandFilterChip(for option: BrandFilterOption) -> some View {
@@ -774,7 +832,8 @@ struct HomeSummaryView: View {
                             location: nil,
                             brand: makeEntry.make,
                             allowedBrands: nil,
-                            initialSearchText: activeHomeSearchText
+                            initialSearchText: activeHomeSearchText,
+                            source: selectedAuctionSource
                         )) {
                             HStack(spacing: 8) {
                                 Circle()

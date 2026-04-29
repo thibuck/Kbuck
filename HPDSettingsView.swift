@@ -308,35 +308,32 @@ struct UserActivityDetailView: View {
     }
 
     var body: some View {
-        ZStack {
-            AppChromeBackground()
-            ScrollView {
-                VStack(spacing: 16) {
-                    adminHeroCard
+        ScrollView {
+            VStack(spacing: 16) {
+                adminHeroCard
 
-                    if isLoading && adminUsers.isEmpty {
-                        VStack(spacing: 12) {
-                            ProgressView()
-                            Text("Loading users...")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(28)
-                        .background(Color(uiColor: .secondarySystemGroupedBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    } else {
-                        LazyVStack(spacing: 12) {
-                            ForEach(adminUsers) { user in
-                                userCard(for: user)
-                            }
+                if isLoading && adminUsers.isEmpty {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("Loading users...")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(28)
+                    .background(Color(uiColor: .secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                } else {
+                    LazyVStack(spacing: 12) {
+                        ForEach(adminUsers) { user in
+                            userCard(for: user)
                         }
                     }
                 }
-                .padding(16)
             }
+            .padding(16)
         }
-        .scrollContentBackground(.hidden)
+        .background(AppChromeBackground().ignoresSafeArea())
         .navigationTitle("User Activity")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -1206,116 +1203,112 @@ struct HPDSettingsView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                AppChromeBackground()
-                    .ignoresSafeArea()
+            Form {
+                Section {
+                    settingsHeroCard
+                }
 
-                Form {
-                    Section {
-                        settingsHeroCard
-                    }
-
-                    if userRole != "super_admin" {
-                        Section(
-                            header: Text("Usage Details"),
-                            footer: Text("Every successful hammer extraction consumes quota, including results loaded instantly from Supabase cache.")
-                        ) {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text("Your current quota snapshot is shown in the header card above.")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-
-                                Button {
-                                    Task {
-                                        isLoadingProfile = true
-                                        await supabaseService.fetchTierConfigs()
-                                        await supabaseService.fetchCurrentProfile()
-                                        isLoadingProfile = false
-                                    }
-                                } label: {
-                                    Label("Refresh Usage", systemImage: "arrow.clockwise")
-                                }
-                            }
-                            .padding(.vertical, 4)
-                        }
-                    }
-
-                    if userRole == "super_admin" {
-                        adminHPDPipelineSection
-                        adminCarfaxSection
-                        adminHPDDataSourceSection
-                    }
-
-                    Section(header: Text("Preferences")) {
-                        Toggle("Open Reports in Safari", isOn: $openWebInSafari)
-                    }
-
+                if userRole != "super_admin" {
                     Section(
-                        header: Text("Cache & Browser"),
-                        footer: Text("Clears URLSession responses, WKWebView data, cookies, storage, and temp files. Favorites and saved quick data stay intact.")
+                        header: Text("Usage Details"),
+                        footer: Text("Every successful hammer extraction consumes quota, including results loaded instantly from Supabase cache.")
                     ) {
-                        Button(role: .destructive) {
-                            showClearOdoAlert = true
-                        } label: {
-                            Label("Clear Browser Cache", systemImage: "trash")
-                        }
-                    }
-                    .alert("Clear Browser Cache", isPresented: $showClearOdoAlert) {
-                        Button("Cancel", role: .cancel) {}
-                        Button("Clear", role: .destructive) {
-                            supabaseService.clearAppCache()
-                            refreshTrigger += 1   // trigger a fresh HPD data fetch
-                        }
-                    } message: {
-                        Text("This clears network responses and WKWebView data used by the scraping engine. Your saved odometer readings, SPV values, and favorites will not be deleted.")
-                    }
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Your current quota snapshot is shown in the header card above.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
 
-                    Section(header: Text("Legal & Support")) {
-                        Button("Terms & Conditions") {
-                            showTerms = true
-                        }
-                        .foregroundStyle(.primary)
-                    }
-
-                    Section(header: Text("Account")) {
-                        Button(role: .destructive) {
-                            showSignOutAlert = true
-                        } label: {
-                            HStack {
-                                Spacer()
-                                Text("Sign Out")
-                                Spacer()
+                            Button {
+                                Task {
+                                    isLoadingProfile = true
+                                    await supabaseService.fetchTierConfigs()
+                                    await supabaseService.fetchCurrentProfile()
+                                    isLoadingProfile = false
+                                }
+                            } label: {
+                                Label("Refresh Usage", systemImage: "arrow.clockwise")
                             }
                         }
-                    }
-                    .alert("Sign Out", isPresented: $showSignOutAlert) {
-                        Button("Cancel", role: .cancel) {}
-                        Button("Sign Out", role: .destructive) {
-                            supabaseService.clearAllLocalState()
-                            Task { try? await supabase.auth.signOut() }
-                        }
-                    } message: {
-                        Text("Are you sure you want to sign out?")
-                    }
-
-                    // App Version Footer
-                    Section {
-                    } footer: {
-                        HStack {
-                            Spacer()
-                            Text("Bubick Company LLC v\(Bundle.main.appVersion)")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                            Spacer()
-                        }
-                        .padding(.top, 4)
+                        .padding(.vertical, 4)
                     }
                 }
-                .scrollContentBackground(.hidden)
-                .background(Color.clear)
+
+                if userRole == "super_admin" {
+                    adminHPDPipelineSection
+                    adminCarfaxSection
+                    adminHPDDataSourceSection
+                }
+
+                Section(header: Text("Preferences")) {
+                    Toggle("Open Reports in Safari", isOn: $openWebInSafari)
+                }
+
+                Section(
+                    header: Text("Cache & Browser"),
+                    footer: Text("Clears URLSession responses, WKWebView data, cookies, storage, and temp files. Favorites and saved quick data stay intact.")
+                ) {
+                    Button(role: .destructive) {
+                        showClearOdoAlert = true
+                    } label: {
+                        Label("Clear Browser Cache", systemImage: "trash")
+                    }
+                }
+                .alert("Clear Browser Cache", isPresented: $showClearOdoAlert) {
+                    Button("Cancel", role: .cancel) {}
+                    Button("Clear", role: .destructive) {
+                        supabaseService.clearAppCache()
+                        refreshTrigger += 1   // trigger a fresh HPD data fetch
+                    }
+                } message: {
+                    Text("This clears network responses and WKWebView data used by the scraping engine. Your saved odometer readings, SPV values, and favorites will not be deleted.")
+                }
+
+                Section(header: Text("Legal & Support")) {
+                    Button("Terms & Conditions") {
+                        showTerms = true
+                    }
+                    .foregroundStyle(.primary)
+                }
+
+                Section(header: Text("Account")) {
+                    Button(role: .destructive) {
+                        showSignOutAlert = true
+                    } label: {
+                        HStack {
+                            Spacer()
+                            Text("Sign Out")
+                            Spacer()
+                        }
+                    }
+                }
+                .alert("Sign Out", isPresented: $showSignOutAlert) {
+                    Button("Cancel", role: .cancel) {}
+                    Button("Sign Out", role: .destructive) {
+                        supabaseService.clearAllLocalState()
+                        Task { try? await supabase.auth.signOut() }
+                    }
+                } message: {
+                    Text("Are you sure you want to sign out?")
+                }
+
+                // App Version Footer
+                Section {
+                } footer: {
+                    HStack {
+                        Spacer()
+                        Text("Bubick Company LLC v\(Bundle.main.appVersion)")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        Spacer()
+                    }
+                    .padding(.top, 4)
+                }
             }
+            .scrollContentBackground(.hidden)
+            .background(AppChromeBackground().ignoresSafeArea())
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationBarBackButtonHidden(true)
             .sheet(isPresented: $showHPDWeb) {
                 NavigationStack {
                     if let url = URL(string: hpdCachedURL.isEmpty ? defaultURLString : hpdCachedURL) {

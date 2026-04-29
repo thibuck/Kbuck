@@ -7,6 +7,31 @@ import Foundation
 
 // MARK: - HPD Entry
 
+enum AuctionSource: String, Codable, CaseIterable, Identifiable, Hashable {
+    case hpd
+    case sheriffAuction
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .hpd:
+            return "HPD Auction"
+        case .sheriffAuction:
+            return "Sheriff Auction"
+        }
+    }
+
+    var shortLabel: String {
+        switch self {
+        case .hpd:
+            return "HPD"
+        case .sheriffAuction:
+            return "Sheriff"
+        }
+    }
+}
+
 struct HPDEntry: Identifiable, Hashable, Codable {
     var id = UUID()
     var dateScheduled: String
@@ -18,6 +43,77 @@ struct HPDEntry: Identifiable, Hashable, Codable {
     var model: String
     var vin: String
     var plate: String
+    var source: AuctionSource = .hpd
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case dateScheduled
+        case time
+        case lotName
+        case lotAddress
+        case year
+        case make
+        case model
+        case vin
+        case plate
+        case source
+    }
+
+    init(
+        id: UUID = UUID(),
+        dateScheduled: String,
+        time: String? = nil,
+        lotName: String,
+        lotAddress: String,
+        year: String,
+        make: String,
+        model: String,
+        vin: String,
+        plate: String,
+        source: AuctionSource = .hpd
+    ) {
+        self.id = id
+        self.dateScheduled = dateScheduled
+        self.time = time
+        self.lotName = lotName
+        self.lotAddress = lotAddress
+        self.year = year
+        self.make = make
+        self.model = model
+        self.vin = vin
+        self.plate = plate
+        self.source = source
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        dateScheduled = try container.decode(String.self, forKey: .dateScheduled)
+        time = try container.decodeIfPresent(String.self, forKey: .time)
+        lotName = try container.decode(String.self, forKey: .lotName)
+        lotAddress = try container.decode(String.self, forKey: .lotAddress)
+        year = try container.decode(String.self, forKey: .year)
+        make = try container.decode(String.self, forKey: .make)
+        model = try container.decode(String.self, forKey: .model)
+        vin = try container.decode(String.self, forKey: .vin)
+        plate = try container.decode(String.self, forKey: .plate)
+        source = try container.decodeIfPresent(AuctionSource.self, forKey: .source) ?? .hpd
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(dateScheduled, forKey: .dateScheduled)
+        try container.encodeIfPresent(time, forKey: .time)
+        try container.encode(lotName, forKey: .lotName)
+        try container.encode(lotAddress, forKey: .lotAddress)
+        try container.encode(year, forKey: .year)
+        try container.encode(make, forKey: .make)
+        try container.encode(model, forKey: .model)
+        try container.encode(vin, forKey: .vin)
+        try container.encode(plate, forKey: .plate)
+        try container.encode(source, forKey: .source)
+    }
 }
 
 // MARK: - Odometer / Valuation Cache
@@ -96,9 +192,13 @@ func parseAuctionDate(_ dateStr: String, timeStr: String?) -> Date? {
     df.timeZone = .current
     let dateCandidatesWithTime = [
         "MM/dd/yyyy h:mm:ss a", "MM/dd/yyyy h:mm a",
+        "MM/dd/yyyy h:mm:ssa", "MM/dd/yyyy h:mma",
         "M/d/yyyy h:mm:ss a", "M/d/yyyy h:mm a",
+        "M/d/yyyy h:mm:ssa", "M/d/yyyy h:mma",
         "MM/dd/yy h:mm:ss a", "MM/dd/yy h:mm a",
-        "M/d/yy h:mm:ss a", "M/d/yy h:mm a"
+        "MM/dd/yy h:mm:ssa", "MM/dd/yy h:mma",
+        "M/d/yy h:mm:ss a", "M/d/yy h:mm a",
+        "M/d/yy h:mm:ssa", "M/d/yy h:mma"
     ]
     if !time.isEmpty {
         for f in dateCandidatesWithTime {
@@ -243,6 +343,10 @@ func brandDisplayName(for rawMake: String) -> String {
     if m.contains("lincoln")    || m.hasPrefix("linc") { return "Lincoln" }
     if m.contains("porsche")    || m.hasPrefix("pors") { return "Porsche" }
     if m.contains("landrover")    || m.hasPrefix("land") { return "Land-Rover" }
+    if m.contains("mini")    || m.hasPrefix("mini") { return "Mini-Cooper" }
+    if m.contains("hummer")    || m.hasPrefix("humm") { return "Hummer" }
+    if m.contains("fiat")    || m.hasPrefix("fiat") { return "Fiat" }
+    if m.contains("volvo")    || m.hasPrefix("volv") { return "Volvo" }
 
 
 
@@ -288,6 +392,10 @@ func brandAssetName(for rawMake: String) -> String? {
     if m.contains("lincoln")    || m.hasPrefix("linc") { return "linc" }
     if m.contains("porsche")    || m.hasPrefix("pors") { return "pors" }
     if m.contains("landrover")    || m.hasPrefix("land") { return "land" }
+    if m.contains("mini-cooper")    || m.hasPrefix("mini") { return "mini" }
+    if m.contains("hummer")    || m.hasPrefix("humm") { return "humm" }
+    if m.contains("fiat")    || m.hasPrefix("fiat") { return "fiat" }
+    if m.contains("volvo")    || m.hasPrefix("volv") { return "volv" }
 
 
     return nil
@@ -401,6 +509,36 @@ func normalizedSearchTerm(_ text: String) -> String {
         .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
         .trimmingCharacters(in: .whitespacesAndNewlines)
         .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+}
+
+func decodeAuctionEntries(_ data: Data) -> [HPDEntry] {
+    (try? JSONDecoder().decode([HPDEntry].self, from: data)) ?? []
+}
+
+func encodeAuctionEntries(_ entries: [HPDEntry]) -> Data {
+    (try? JSONEncoder().encode(entries)) ?? Data()
+}
+
+func mergedAuctionEntries(_ groups: [HPDEntry]...) -> [HPDEntry] {
+    var seen: Set<String> = []
+    var merged: [HPDEntry] = []
+
+    for entry in groups.flatMap({ $0 }) {
+        let key = [
+            entry.source.rawValue,
+            normalizedYear(entry.year),
+            normalizeVIN(entry.vin),
+            entry.dateScheduled.trimmingCharacters(in: .whitespacesAndNewlines),
+            entry.lotAddress.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            entry.lotName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        ].joined(separator: "|")
+
+        if seen.insert(key).inserted {
+            merged.append(entry)
+        }
+    }
+
+    return merged
 }
 
 func vehicleMatchesSearch(_ query: String, entry: HPDEntry, odoInfo: OdoInfo? = nil) -> Bool {

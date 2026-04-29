@@ -105,6 +105,7 @@ struct ContentView: View {
     @State private var didBootstrapFavorites = false
     @State private var showInitialPaywall: Bool = false
     @State private var isPreloadingHPDCache = false
+    @State private var isPreloadingSheriffCache = false
     @State private var isPreloadingVehicleCache = false
     @State private var lastVehicleCachePreloadKey: String = ""
     @AppStorage("vehicleCacheWarmupInProgress") private var vehicleCacheWarmupInProgress: Bool = false
@@ -112,9 +113,11 @@ struct ContentView: View {
     @AppStorage("hpdUserBanned")          private var isUserBanned: Bool = false
     @AppStorage("hasSeenInitialPaywall")  private var hasSeenInitialPaywall: Bool = false
     @AppStorage("hpdCachedEntries")       private var hpdCachedEntriesData: Data = Data()
+    @AppStorage("sheriffCachedEntries")   private var sheriffCachedEntriesData: Data = Data()
     @AppStorage("hpdCachedURL")           private var hpdCachedURL: String = ""
     @AppStorage("hpdLastFetchTS")         private var hpdLastFetchTS: Double = 0
     @AppStorage("lastHPDSyncDate")        private var lastHPDSyncDate: Double = 0
+    @AppStorage("lastSheriffSyncDate")    private var lastSheriffSyncDate: Double = 0
     @AppStorage("hpdHadLastError")        private var hpdHadLastError: Bool = false
     @AppStorage("hpdManualURLEnabled")    private var manualURLModeEnabled: Bool = false
     @AppStorage("hpdManualURLInput")      private var hpdManualURLInput: String = ""
@@ -245,6 +248,7 @@ struct ContentView: View {
                     fetchRole()
                     runGlobalLifecycleSync()
                     await preloadHPDAuctionDataIfNeeded(force: true)
+                    await preloadSheriffAuctionDataIfNeeded(force: true)
                     startVehicleCachePreload()
                     if !hasSeenInitialPaywall && userRole != "super_admin" {
                         hasSeenInitialPaywall = true
@@ -269,6 +273,7 @@ struct ContentView: View {
                 await supabaseService.fetchAppSettings()
                 runGlobalLifecycleSync()
                 await preloadHPDAuctionDataIfNeeded()
+                await preloadSheriffAuctionDataIfNeeded()
                 hpdRefreshTrigger += 1
             }
         }
@@ -278,6 +283,7 @@ struct ContentView: View {
             guard isAuthenticated else { return }
             Task {
                 await preloadHPDAuctionDataIfNeeded(force: true)
+                await preloadSheriffAuctionDataIfNeeded(force: true)
                 startVehicleCachePreload()
             }
         }
@@ -406,7 +412,10 @@ struct ContentView: View {
     private func preloadVehicleCacheForCurrentEntries() async {
         guard !isPreloadingVehicleCache else { return }
 
-        let entries = (try? JSONDecoder().decode([HPDEntry].self, from: hpdCachedEntriesData)) ?? []
+        let entries = mergedAuctionEntries(
+            decodeAuctionEntries(hpdCachedEntriesData),
+            decodeAuctionEntries(sheriffCachedEntriesData)
+        )
         let entryVINs = entries.map(\.vin)
         let favoriteVINs = Array(supabaseService.favorites)
         let vinsToPreload = Array(Set(entryVINs + favoriteVINs))
@@ -424,6 +433,29 @@ struct ContentView: View {
         lastVehicleCachePreloadKey = preloadKey
 
         await supabaseService.preloadNHTSACacheForVINs(vinsToPreload)
+    }
+
+    private func preloadSheriffAuctionDataIfNeeded(force: Bool = false) async {
+        guard !isPreloadingSheriffCache else { return }
+
+        let alreadySyncedToday = Calendar.current.isDateInToday(Date(timeIntervalSince1970: lastSheriffSyncDate))
+        if !force, alreadySyncedToday, !sheriffCachedEntriesData.isEmpty {
+            return
+        }
+
+        isPreloadingSheriffCache = true
+        defer { isPreloadingSheriffCache = false }
+
+        do {
+            let entries = try await SheriffAuctionFetcher().fetchAllEntries()
+                .filter { !isDateInPast($0.dateScheduled) }
+            guard !entries.isEmpty else { return }
+
+            sheriffCachedEntriesData = encodeAuctionEntries(entries)
+            lastSheriffSyncDate = Date().timeIntervalSince1970
+        } catch {
+            print("🔴 Sheriff preload failed: \(error.localizedDescription)")
+        }
     }
 
     private func startVehicleCachePreload() {

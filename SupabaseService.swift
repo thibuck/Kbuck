@@ -167,6 +167,7 @@ private struct StatVinCacheUpsertRow: Encodable {
     @Published private(set) var odoByVIN: [String: OdoInfo] = [:]
     @Published private(set) var decodedMakeByVIN: [String: String] = [:]
     @Published private(set) var decodedModelByVIN: [String: String] = [:]
+    private var fetchedVINs: Set<String> = []
     @Published private(set) var engineByVIN: [String: String] = [:]
     @Published private(set) var trimByVIN: [String: String] = [:]
     @Published private(set) var bodyClassByVIN: [String: String] = [:]
@@ -859,8 +860,11 @@ private struct StatVinCacheUpsertRow: Encodable {
         let cleanVIN = normalizeVIN(vin)
         guard !cleanVIN.isEmpty else { return }
 
-        // Only skip if we already have both make and model — engine alone is not enough.
+        // Skip if already fetched (even if result had null make/model) or if both are in memory.
+        if fetchedVINs.contains(cleanVIN) { return }
         if decodedMakeByVIN[cleanVIN] != nil && decodedModelByVIN[cleanVIN] != nil { return }
+
+        fetchedVINs.insert(cleanVIN)
 
         do {
             let rows: [NHTSACacheUpdate] = try await supabase
@@ -880,6 +884,7 @@ private struct StatVinCacheUpsertRow: Encodable {
                 print("⚠️ [SupabaseCache] No cache row found for VIN \(cleanVIN)")
             }
         } catch {
+            fetchedVINs.remove(cleanVIN) // allow retry on network error
             print("🔴 NHTSA CACHE: loadNHTSACacheForVIN failed for \(cleanVIN): \(error)")
         }
     }
@@ -891,7 +896,7 @@ private struct StatVinCacheUpsertRow: Encodable {
         guard !uniqueVINs.isEmpty else { return }
 
         let missingVINs = uniqueVINs.filter { vin in
-            decodedMakeByVIN[vin] == nil || decodedModelByVIN[vin] == nil
+            !fetchedVINs.contains(vin) && (decodedMakeByVIN[vin] == nil || decodedModelByVIN[vin] == nil)
         }
         guard !missingVINs.isEmpty else { return }
 
@@ -907,6 +912,8 @@ private struct StatVinCacheUpsertRow: Encodable {
                     .execute()
                     .value
 
+                // Mark all VINs in this batch as fetched so null-result VINs aren't re-queried
+                for vin in batch { fetchedVINs.insert(vin) }
                 for row in rows {
                     applyNHTSACacheUpdate(row)
                 }

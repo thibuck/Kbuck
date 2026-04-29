@@ -375,6 +375,13 @@ struct VehicleCardView: View {
         return time.isEmpty ? address : "\(address) · \(time)"
     }
 
+    private var favoriteCollapsedLocationLine: String? {
+        let address = sanitizedAddr(entry.lotAddress).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !address.isEmpty else { return nil }
+        let time = parseAuctionDateWithTime(entry.dateScheduled, timeStr: entry.time)?.compactAuctionTime() ?? ""
+        return time.isEmpty ? address : "\(time) - \(address)"
+    }
+
     private func titleCasedVehicleText(_ text: String) -> String {
         text
             .split(separator: " ")
@@ -457,6 +464,19 @@ struct VehicleCardView: View {
     private func handleWebTap() {
         haptic(.light)
         showStatVinFlow = true
+    }
+
+    private func copyVINToPasteboard() {
+        UIPasteboard.general.string = entry.vin
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        copiedVIN = entry.vin
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            if copiedVIN == entry.vin {
+                copiedVIN = nil
+            }
+        }
     }
 
     private func nextUpgradeOffer() -> (name: String, limit: String)? {
@@ -610,6 +630,17 @@ struct VehicleCardView: View {
                                 .foregroundColor(Color.primary.opacity(0.30))
                                 .lineLimit(1)
                         }
+
+                        if copiedVIN == entry.vin {
+                            Text("Copied!")
+                                .font(.system(size: 9.5, weight: .semibold))
+                                .foregroundStyle(primaryActionTint)
+                                .lineLimit(1)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        copyVINToPasteboard()
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -640,6 +671,11 @@ struct VehicleCardView: View {
             .padding(.horizontal, 14)
             .padding(.top, 14)
             .padding(.bottom, 12)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                haptic(.light)
+                isExpanded.toggle()
+            }
 
             Divider()
                 .opacity(0.05)
@@ -794,7 +830,28 @@ struct VehicleCardView: View {
             }
             .padding(.horizontal, 14)
             .padding(.top, 10)
-            .padding(.bottom, 12)
+            .padding(.bottom, isFavoritesContext && isExpanded ? 8 : 12)
+
+            if isFavoritesContext, isExpanded, let favoriteCollapsedLocationLine {
+                Divider()
+                    .opacity(0.05)
+
+                Text(favoriteCollapsedLocationLine)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color.primary.opacity(0.46))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 8)
+                    .padding(.bottom, 12)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        haptic(.light)
+                        isExpanded.toggle()
+                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
         }
     }
 
@@ -888,13 +945,7 @@ struct VehicleCardView: View {
                 }
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    UIPasteboard.general.string = entry.vin
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
-                    copiedVIN = entry.vin
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 2_000_000_000)
-                        copiedVIN = nil
-                    }
+                    copyVINToPasteboard()
                 }
                 .overlay(alignment: .trailing) {
                     if hasSavedCarfaxReport || isCarfaxEnabled {
@@ -1455,25 +1506,10 @@ struct VehicleCardView: View {
         return t
     }
 
-    /// Mirrors HPDView.parseAuctionDate(_:timeStr:).
+    /// Uses the shared auction parser so compact sheriff times such as `9:30am`
+    /// resolve exactly the same way in summaries and in detail cards.
     private func parseAuctionDateWithTime(_ dateStr: String, timeStr: String?) -> Date? {
-        let base = dateStr.trimmingCharacters(in: .whitespacesAndNewlines)
-        let time = (timeStr ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let df = DateFormatter()
-        df.locale   = Locale(identifier: "en_US_POSIX")
-        df.timeZone = .current
-        if !time.isEmpty {
-            for f in ["MM/dd/yyyy h:mm:ss a","MM/dd/yyyy h:mm a","M/d/yyyy h:mm:ss a","M/d/yyyy h:mm a",
-                      "MM/dd/yy h:mm:ss a","MM/dd/yy h:mm a","M/d/yy h:mm:ss a","M/d/yy h:mm a"] {
-                df.dateFormat = f
-                if let d = df.date(from: "\(base) \(time)") { return d }
-            }
-        }
-        for f in ["MM/dd/yyyy","M/d/yyyy","MM/dd/yy","M/d/yy"] {
-            df.dateFormat = f
-            if let d = df.date(from: base) { return d }
-        }
-        return nil
+        parseAuctionDate(dateStr, timeStr: timeStr)
     }
 
     /// Mirrors HPDView.addToCalendar(entry:) exactly.
@@ -2219,23 +2255,7 @@ struct ExtractionFlowView: View {
     }
 
     private func parseAuctionDateWithTime(_ dateStr: String, timeStr: String?) -> Date? {
-        let base = dateStr.trimmingCharacters(in: .whitespacesAndNewlines)
-        let time = (timeStr ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "en_US_POSIX")
-        df.timeZone = .current
-        if !time.isEmpty {
-            for f in ["MM/dd/yyyy h:mm:ss a","MM/dd/yyyy h:mm a","M/d/yyyy h:mm:ss a","M/d/yyyy h:mm a",
-                      "MM/dd/yy h:mm:ss a","MM/dd/yy h:mm a","M/d/yy h:mm:ss a","M/d/yy h:mm a"] {
-                df.dateFormat = f
-                if let d = df.date(from: "\(base) \(time)") { return d }
-            }
-        }
-        for f in ["MM/dd/yyyy","M/d/yyyy","MM/dd/yy","M/d/yy"] {
-            df.dateFormat = f
-            if let d = df.date(from: base) { return d }
-        }
-        return nil
+        parseAuctionDate(dateStr, timeStr: timeStr)
     }
 
     private var calendarEntryDetails: String {

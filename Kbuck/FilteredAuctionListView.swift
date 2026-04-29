@@ -33,8 +33,10 @@ struct FilteredAuctionListView: View {
     let brand:    String?
     let allowedBrands: [String]?
     let initialSearchText: String
+    let source: AuctionSource?
 
     @AppStorage("hpdCachedEntries") private var hpdCachedEntriesData: Data = Data()
+    @AppStorage("sheriffCachedEntries") private var sheriffCachedEntriesData: Data = Data()
     @AppStorage("nhtsaDecodedCount") private var decodedCount: Int = 0
     @AppStorage("nhtsaTotalToDecode") private var totalToDecode: Int = 0
     @AppStorage("nhtsaIsDecoding") private var isDecoding: Bool = false
@@ -51,22 +53,26 @@ struct FilteredAuctionListView: View {
         location: String?,
         brand: String?,
         allowedBrands: [String]? = nil,
-        initialSearchText: String = ""
+        initialSearchText: String = "",
+        source: AuctionSource? = nil
     ) {
         self.date = date
         self.location = location
         self.brand = brand
         self.allowedBrands = allowedBrands
         self.initialSearchText = initialSearchText
+        self.source = source
         self._searchText = State(initialValue: initialSearchText)
     }
 
     // MARK: - Base filter (date + location + brand)
 
     private var filteredEntries: [HPDEntry] {
-        guard !hpdCachedEntriesData.isEmpty,
-              let all = try? JSONDecoder().decode([HPDEntry].self, from: hpdCachedEntriesData)
-        else { return [] }
+        let all = mergedAuctionEntries(
+            decodeAuctionEntries(hpdCachedEntriesData),
+            decodeAuctionEntries(sheriffCachedEntriesData)
+        )
+        guard !all.isEmpty else { return [] }
 
         let locationKey = location.map(streetKey)
         let brandUpper  = brand?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
@@ -85,7 +91,8 @@ struct FilteredAuctionListView: View {
             } else {
                 sameBrand = true
             }
-            return sameDate && sameLocation && sameBrand
+            let sameSource = source.map { entry.source == $0 } ?? true
+            return sameDate && sameLocation && sameBrand && sameSource
         }
     }
 

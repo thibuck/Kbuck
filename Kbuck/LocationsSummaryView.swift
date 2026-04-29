@@ -72,9 +72,17 @@ private struct DateLocationCard: Identifiable {
     let locations: [LocationFilterOption]
 }
 
+private struct AuctionSourceOption: Identifiable {
+    let id: AuctionSource
+    let source: AuctionSource
+    let count: Int
+}
+
 struct LocationsSummaryView: View {
 
     @AppStorage("hpdCachedEntries") private var hpdCachedEntriesData: Data = Data()
+    @AppStorage("sheriffCachedEntries") private var sheriffCachedEntriesData: Data = Data()
+    @AppStorage("locationsSelectedAuctionSource") private var selectedAuctionSourceRaw: String = AuctionSource.hpd.rawValue
     @AppStorage("hpdRefreshTrigger") private var hpdRefreshTrigger: Int = 0
     @AppStorage("vehicleCacheWarmupInProgress") private var vehicleCacheWarmupInProgress: Bool = false
     @Environment(\.colorScheme) private var colorScheme
@@ -83,6 +91,7 @@ struct LocationsSummaryView: View {
 
     @State private var cachedGroupedSummaries: [DateLocationCard] = []
     @State private var cachedLocationOptions: [LocationFilterOption] = []
+    @State private var cachedSourceOptions: [AuctionSourceOption] = []
     @State private var cachedActiveVehicleCount: Int = 0
     @State private var hasBaseAuctionData: Bool = false
     @State private var expandedDates: Set<String> = []
@@ -91,6 +100,11 @@ struct LocationsSummaryView: View {
     @State private var locationSearchText: String = ""
     @State private var locationFilterAutoCollapseToken = UUID()
     @State private var showQuotaSheet = false
+
+    private var selectedAuctionSource: AuctionSource {
+        get { AuctionSource(rawValue: selectedAuctionSourceRaw) ?? .hpd }
+        nonmutating set { selectedAuctionSourceRaw = newValue.rawValue }
+    }
 
     private var activeSearchText: String {
         locationSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -246,11 +260,15 @@ struct LocationsSummaryView: View {
     }
 
     private func recomputeSummaries() {
-        guard !hpdCachedEntriesData.isEmpty,
-              let decoded = try? JSONDecoder().decode([HPDEntry].self, from: hpdCachedEntriesData)
-        else {
+        let decoded = mergedAuctionEntries(
+            decodeAuctionEntries(hpdCachedEntriesData),
+            decodeAuctionEntries(sheriffCachedEntriesData)
+        )
+
+        guard !decoded.isEmpty else {
             cachedGroupedSummaries = []
             cachedLocationOptions = []
+            cachedSourceOptions = []
             cachedActiveVehicleCount = 0
             hasBaseAuctionData = false
             expandedDates = []
@@ -258,12 +276,21 @@ struct LocationsSummaryView: View {
         }
 
         hasBaseAuctionData = !decoded.isEmpty
+        cachedSourceOptions = AuctionSource.allCases.map { source in
+            AuctionSourceOption(
+                id: source,
+                source: source,
+                count: decoded.filter { $0.source == source && !isDateInPast($0.dateScheduled) }.count
+            )
+        }
+
+        let sourceEntries = decoded.filter { $0.source == selectedAuctionSource }
 
         let searchFilteredEntries: [HPDEntry]
         if activeSearchText.isEmpty {
-            searchFilteredEntries = decoded
+            searchFilteredEntries = sourceEntries
         } else {
-            searchFilteredEntries = decoded.filter { entry in
+            searchFilteredEntries = sourceEntries.filter { entry in
                 vehicleMatchesSearch(activeSearchText, entry: entry)
                     || Self.normalizeAddress(entry.lotAddress).localizedCaseInsensitiveContains(activeSearchText)
             }
@@ -311,6 +338,8 @@ struct LocationsSummaryView: View {
                                 placeholder: "Year, make, model, VIN or location"
                             )
 
+                            auctionSourceCard
+
                             locationFilterCard
 
                             if cachedGroupedSummaries.isEmpty {
@@ -338,7 +367,7 @@ struct LocationsSummaryView: View {
                                 .controlSize(.small)
                         }
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("HPD AUCTION")
+                            Text(selectedAuctionSource.displayName.uppercased())
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundColor(Color.primary.opacity(0.32))
                                 .kerning(2)
@@ -412,6 +441,40 @@ struct LocationsSummaryView: View {
                 scheduleLocationFilterAutoCollapse()
             }
             recomputeSummaries()
+        }
+        .onChange(of: selectedAuctionSourceRaw) { _, _ in
+            recomputeSummaries()
+        }
+    }
+
+    private var auctionSourceCard: some View {
+        HStack(spacing: 10) {
+            ForEach(cachedSourceOptions) { option in
+                let isSelected = option.source == selectedAuctionSource
+
+                Button {
+                    selectedAuctionSource = option.source
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(option.source.shortLabel)
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("\(option.count)")
+                            .font(.system(size: 12, weight: .medium))
+                            .monospacedDigit()
+                            .foregroundStyle(Color.primary.opacity(isSelected ? 0.62 : 0.40))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(isSelected ? locationChipSelectedBackground : locationChipBackground)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Color.primary.opacity(isSelected ? 0.14 : 0.08), lineWidth: 0.5)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 
@@ -535,15 +598,7 @@ struct LocationsSummaryView: View {
     }
 
     private func scheduleLocationFilterAutoCollapse() {
-        let token = UUID()
-        locationFilterAutoCollapseToken = token
-
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 7_000_000_000)
-            guard locationFilterAutoCollapseToken == token, isLocationFilterExpanded else { return }
-            guard activeSearchText.isEmpty else { return }
-            isLocationFilterExpanded = false
-        }
+        locationFilterAutoCollapseToken = UUID()
     }
 
     @ViewBuilder
@@ -596,7 +651,8 @@ struct LocationsSummaryView: View {
                             location: locationEntry.location,
                             brand: nil,
                             allowedBrands: nil,
-                            initialSearchText: activeSearchText
+                            initialSearchText: activeSearchText,
+                            source: selectedAuctionSource
                         )) {
                             HStack(spacing: 10) {
                                 Circle()

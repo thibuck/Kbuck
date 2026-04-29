@@ -14,6 +14,7 @@ struct KbuckApp: App {
 
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @AppStorage("hpdCachedEntries") private var hpdCachedEntriesData: Data = Data()
+    @AppStorage("sheriffCachedEntries") private var sheriffCachedEntriesData: Data = Data()
     @StateObject private var storeManager = StoreManager()
     @StateObject private var supabaseService = SupabaseService()
     @State private var showsLaunchSplash = true
@@ -22,18 +23,19 @@ struct KbuckApp: App {
         NotificationManager.shared.configure()
     }
 
-    private var splashTotalCount: Int? {
-        guard
-            let entries = try? JSONDecoder().decode([HPDEntry].self, from: hpdCachedEntriesData),
-            !entries.isEmpty
-        else {
-            return nil
-        }
-
+    private var splashHPDCount: Int? {
+        let entries = decodeAuctionEntries(hpdCachedEntriesData)
+        guard !entries.isEmpty else { return nil }
         return entries.reduce(into: 0) { count, entry in
-            if !isDateInPast(entry.dateScheduled) {
-                count += 1
-            }
+            if !isDateInPast(entry.dateScheduled) { count += 1 }
+        }
+    }
+
+    private var splashSheriffCount: Int? {
+        let entries = decodeAuctionEntries(sheriffCachedEntriesData)
+        guard !entries.isEmpty else { return nil }
+        return entries.reduce(into: 0) { count, entry in
+            if !isDateInPast(entry.dateScheduled) { count += 1 }
         }
     }
 
@@ -48,7 +50,7 @@ struct KbuckApp: App {
                     }
 
                 if showsLaunchSplash {
-                    AuctionSplashView(totalCount: splashTotalCount)
+                    AuctionSplashView(hpdCount: splashHPDCount, sheriffCount: splashSheriffCount)
                         .transition(.opacity)
                         .zIndex(1)
                 }
